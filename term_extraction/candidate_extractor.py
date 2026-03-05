@@ -94,9 +94,9 @@ class CandidateExtractor:
         self.uni_matcher = Matcher(nlp.vocab)
         self.uni_matcher.add("UNIGRAM_PATTERN", [[{"POS": {"IN": list(K)}}]])
 
-    def stream_corpus(self, directory):
-        for filename in listdir(directory):
-            full_path = join(directory, filename)
+    def stream_corpus(self, path):
+        for filename in listdir(path):
+            full_path = join(path, filename)
             with open(full_path) as f:
                 yield f.read()
 
@@ -107,20 +107,17 @@ class CandidateExtractor:
         return text
 
     def process_corpus(self):
-        sentences = []
         all_ngrams = []
         all_unigrams = []
 
         if self.path:
-            docs = nlp.pipe(
-                (
-                    self.clean_text(t)
-                    for t in tqdm(
-                        self.stream_corpus(self.path), desc="Processing documents..."
-                    )
+            docs = tqdm(
+                nlp.pipe(
+                    (self.clean_text(t) for t in self.stream_corpus(self.path)),
+                    batch_size=32,
+                    n_process=4,
                 ),
-                batch_size=32,
-                n_process=4,
+                desc="Processing documents...",
             )
         elif self.text:
             docs = [nlp(self.text)]
@@ -130,8 +127,6 @@ class CandidateExtractor:
             )
 
         for doc in tqdm(docs, desc="Extracting candidates..."):
-
-            sentences.extend(list(doc.sents))
 
             ngrams = self.extract_multiwords(doc)
             unigrams = self.extract_unigrams(doc)
@@ -144,11 +139,7 @@ class CandidateExtractor:
             all_ngrams.extend(ngrams)
             all_unigrams.extend(unigrams)
 
-        return {
-            "sentences": sentences,
-            "ngrams": all_ngrams,
-            "unigrams": all_unigrams,
-        }
+        return all_unigrams, all_ngrams
 
     def extract_multiwords(self, doc):
         candidate_tuples = []

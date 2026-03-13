@@ -1,15 +1,7 @@
 import random
-
-from sklearn.feature_extraction.text import CountVectorizer
-import pandas as pd
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
-import itertools
-from collections import Counter
 import torch
-from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModel, AutoTokenizer
 import torch.nn.functional as F
 from collections import defaultdict
@@ -18,9 +10,8 @@ from util import l2_normalize
 from multiprocessing import Pool, cpu_count
 
 # TODO add type hints...
-from typing import Dict, List, Tuple, Union
-
-ResultType = Tuple[str, Union[np.ndarray, List[np.ndarray]]]
+from typing import List, Tuple, Union
+from models import CandidateSummary, TermEmbeddings, TermSummary
 
 # from qdrant_client import QdrantClient
 # from qdrant_client.http import models
@@ -44,31 +35,13 @@ class TermExtractor:
         self.model.eval()
         self.topic_score_thres = topic_score_thres
 
-    def extract_candidates(self):
-        # TODO maybe count occurances per sentence for early stopping
+    # Dict: [cand, list[sentences]]
+    def extract_candidates(self) -> Tuple[dict[str, list[str]], dict[str, list[str]]]:
         # REVIEW include document IDs? --> maybe come back and do this once I figure out the top2vec integration
-        """
-        Input: List[Tuple(Span, Span)]], List[Tuple(Span, Span)]]
-        --> Tuple(uni or ngram candidate, sentence they came from)
-        """
         candidate_extractor = CandidateExtractor(path=self.corpus_path)
         unigram_candidates, ngram_candidates = candidate_extractor.process_corpus()
 
-        unigram_grouped = self.group_candidates(unigram_candidates)
-        ngram_grouped = self.group_candidates(ngram_candidates)
-
-        return unigram_grouped, ngram_grouped
-
-    def group_candidates(self, candidate_tuples):
-        # restructuring the candidate tuples now that POS info isn't needed
-        # TODO this should be done during candidate extraction
-        grouped = defaultdict(list)
-
-        for span, sent in candidate_tuples:
-            text = span.text
-            key = text.lower() if not text.islower() else text
-            grouped.setdefault(key, []).append(sent.text)
-        return grouped
+        return unigram_candidates, ngram_candidates
 
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]
@@ -79,8 +52,10 @@ class TermExtractor:
             input_mask_expanded.sum(1), min=1e-9
         )
 
-    def encode(self, candidates):
-        encoded_candidates = {}
+    # input: Dict: [cand, list[sentences]]
+    # output: Dict: [str, CandidateSummary(tokenized sentences, token embeddings, sentence embeddings)]
+    def encode(self, candidates: dict[str, list[str]]) -> dict[str, CandidateSummary]:
+        encoded_candidates = defaultdict(CandidateSummary)
 
         all_sentences = []
         candidate_map = []
@@ -113,20 +88,22 @@ class TermExtractor:
 
         # regroup
         for i, candidate in enumerate(candidate_map):
-            if candidate not in encoded_candidates:  # defaultdict?
-                encoded_candidates[candidate] = [[], [], []]
 
-            encoded_candidates[candidate][0].append(
+            encoded_candidates[candidate].tok_sents.append(
                 encoded_input["input_ids"][i].tolist()
             )
-            encoded_candidates[candidate][1].append(token_embeddings[i])
-            encoded_candidates[candidate][2].append(sentence_embeddings[i])
-        # Dict: [str, List[tokenized_sentences, token_embeddings, sentence_embeddings]]
+            encoded_candidates[candidate].tok_embeds.append(token_embeddings[i])
+            encoded_candidates[candidate].sent_embeds.append(sentence_embeddings[i])
+
         return encoded_candidates
 
-    def encode_whole(self, candidates):
-        indiv_candidates = candidates.keys()
-        encoded_candidates = {}
+    # input: Dict: [cand, list[sentences]]
+    # output: Dict: [str, TermEmbeddings(word embedding, slist[sentence embedding(s)])]
+    def encode_general(
+        self, candidates: dict[str, list[str]]
+    ) -> dict[str, TermEmbeddings]:
+        indiv_candidates = list(candidates.keys())
+        encoded_candidates = defaultdict(TermEmbeddings)
 
         all_sentences = []
         candidate_map = []
@@ -171,20 +148,25 @@ class TermExtractor:
 
         # regroup
         for i in range(len(indiv_candidates)):
-            if indiv_candidates[i] not in encoded_candidates:  # defaultdict?
-                encoded_candidates[candidate] = [[], []]
             # add candidate embedding for each
-            encoded_candidates[indiv_candidates[i]][0] = candidate_embeddings[i]
+            encoded_candidates[indiv_candidates[i]].word_embed = candidate_embeddings[i]
 
         for i, candidate in enumerate(candidate_map):
-            encoded_candidates[candidate][1].append(sentence_embeddings[i])
+            encoded_candidates[candidate].sent_embeds.append(sentence_embeddings[i])
 
-        # Dict: [str, Tuple[word embedding, List[sentence_embedding(s)]]
         return encoded_candidates
 
-    def token_to_word(self, args):
-        candidate, info, tokenizer, mode = args
-        tokenized_sentences, token_embeds, _ = info  # just to be more clear
+    # input: Tuple[str, CandidateSummary]
+    # output: Tuple[str, TermEmbeddings]
+    def token_to_word(
+        self,
+        args: Tuple[str, CandidateSummary],
+        mode: str = "mean",
+    ) -> Tuple[str, TermEmbeddings] | Tuple[str, TermSummary]:
+        # types: str, CandidateSummary
+        candidate, info = args
+        tokenized_sentences = info.tok_sents
+        token_embeds = info.tok_embeds
         token_embeds = np.array(
             token_embeds
         )  # shape: (num_sentences, seq_len, hidden_dim)
@@ -228,33 +210,30 @@ class TermExtractor:
                 word_embeddings.append(l2_normalize(np.mean(frag_embeds, axis=0)))
 
         if len(word_embeddings) > 0:
-            # REVIEW i misread Xiao 2026 so i probs don't need this
-            if mode == "contextual":
+            if mode == "mean":
                 final = np.mean(word_embeddings, axis=0)
                 final = l2_normalize(np.mean(word_embeddings, axis=0))
-                return candidate, final
+                return candidate, TermEmbeddings(final, info.sent_embeds)
             else:
-                return (
-                    candidate,
-                    word_embeddings,
-                )  # REVIEW i don't think there's a scenario where i use this
+                return (candidate, TermSummary(word_embeddings, info.sent_embeds))
         else:
             raise ValueError(f"No embeddings found for candidate: {candidate}")
 
+    # input: Dict: [str, CandidateSummary]
+    # output: Dict: [str, TermEmbeddings(contextualized embedding, sentence embed(s))]
     def create_word_embeddings(
-        self, encoded_candidates, tokenizer, mode="mean", n_processes=None
-    ):
+        self,
+        encoded_candidates: dict[str, CandidateSummary],
+        n_processes: int | None = None,
+    ) -> dict[str, TermEmbeddings | TermSummary]:
         if n_processes is None:
             n_processes = max(cpu_count() - 1, 1)
 
-        args = [
-            (candidate, info, tokenizer, mode)
-            for candidate, info in encoded_candidates.items()
-        ]
+        args = [(candidate, info) for candidate, info in encoded_candidates.items()]
 
         # create pool and map
         with Pool(processes=n_processes) as pool:
-            results: List[ResultType] = pool.map(self.token_to_word, args)
+            results = pool.map(self.token_to_word, args)
 
         candidate_embeddings = dict(results)
         return candidate_embeddings
@@ -263,12 +242,16 @@ class TermExtractor:
 
     # TODO rewrite as indiv so parallelize
 
-    def compute_self_similarity_cast(self, word_embeddings, max_sample_size=5000):
+    def self_similarity(
+        self, word_embeddings: dict[str, TermSummary], max_sample_size=5000
+    ):
         ss_score = {}
 
-        for word, embeds in tqdm(
+        for word, info in tqdm(
             word_embeddings.items(), desc="Calculating self-similarity scores..."
         ):
+            embeds = info.word_embeds
+
             if len(embeds) < 2:
                 continue
 
@@ -298,9 +281,11 @@ class TermExtractor:
         return ss_score
 
     # NOTE input aka candidate_embeddings must = Dict[str, contextual_embedding]
-    def contextualized_vs_general(self, candidate_embeddings, model, tokenizer):
+    def contextualized_vs_general(
+        self, candidate_embeddings: dict[str, TermEmbeddings], model, tokenizer
+    ):
         diff_scores = {}
-        all_candidates = candidate_embeddings.keys
+        all_candidates = list(candidate_embeddings.keys())
 
         encoded_input = tokenizer(
             all_candidates,
@@ -320,8 +305,8 @@ class TermExtractor:
         general_embeddings = general_embeddings.cpu().numpy()
 
         # FIXME this can be faster --> pytorch?
-        for idx, word in enumerate(candidate_embeddings.keys()):
-            context_e = candidate_embeddings[idx]
+        for idx, word in enumerate(all_candidates):
+            context_e = candidate_embeddings[word].word_embed
             general_e = general_embeddings[idx]
 
             # normalize
@@ -338,22 +323,19 @@ class TermExtractor:
 
     # FIXME assignment on parameters means actually changing the reference so make sure i don't do that unless its intentional
 
-    # REVIEW either use contextual or general, and then either avg or just 1 > threshold
-
+    # input: dict [str, tuple[word embedding, List[sentence embeddings]]]
     def topic_score(
         self,
-        candidate_tuples,
+        candidate_tuples: dict[str, TermEmbeddings],
         method="max",
     ):
-        # dict [str, tuple[context embedding, List[sentence embeddings]]]
-
         topic_scores = {}
-        filtered_candidates = []
+        filtered_candidates = {}
         cand_idx = 0
 
         for word, info in candidate_tuples.items():
-            cand_embedding = info[0]
-            sentence_embeddings = info[1]
+            cand_embedding = info.word_embed
+            sentence_embeddings = info.sent_embeds
 
             sent_embeds = np.vstack(sentence_embeddings)
 
@@ -374,8 +356,27 @@ class TermExtractor:
             topic_scores[word] = float(score)
 
             if score <= self.topic_score_thres:
-                filtered_candidates.append(candidate_tuples[cand_idx])
+                filtered_candidates[word] = info
 
             cand_idx += 1
 
         return filtered_candidates, topic_scores
+
+    def self_similarity_change(
+        self,
+        fine_tuned_embeddings: dict[str, TermSummary],
+        vanilla_embeddings: dict[str, TermSummary],
+        max_sample_size=5000,
+    ):
+
+        ssf = self.self_similarity(
+            fine_tuned_embeddings, max_sample_size=max_sample_size
+        )
+        ssv = self.self_similarity(vanilla_embeddings, max_sample_size=max_sample_size)
+
+        ssc_scores = {}
+        for word in ssf.keys():
+            if word in ssv:
+                ssc_scores[word] = round(ssf[word] - ssv[word], 3)
+
+        return ssc_scores

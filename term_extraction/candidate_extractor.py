@@ -5,6 +5,9 @@ from spacy.matcher import Matcher
 from transformers import BertTokenizer
 import requests
 from tqdm import tqdm
+from collections import defaultdict
+from spacy.tokens import Doc, Span
+from typing import Tuple
 
 tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 stopword_url = "https://raw.githubusercontent.com/term-extraction-project/stop_words/main/stop_words_en.txt"
@@ -94,19 +97,19 @@ class CandidateExtractor:
         self.uni_matcher = Matcher(nlp.vocab)
         self.uni_matcher.add("UNIGRAM_PATTERN", [[{"POS": {"IN": list(K)}}]])
 
-    def stream_corpus(self, path):
+    def stream_corpus(self, path: str):
         for filename in listdir(path):
             full_path = join(path, filename)
             with open(full_path) as f:
                 yield f.read()
 
-    def clean_text(self, text):
+    def clean_text(self, text: str) -> str:
         text = text.strip()
         text = text.replace("  ", " ")
         text = text.replace(" -", "-").replace(" - ", "-")
         return text
 
-    def process_corpus(self):
+    def process_corpus(self) -> Tuple[dict[str, list[str]], dict[str, list[str]]]:
         all_ngrams = []
         all_unigrams = []
 
@@ -132,16 +135,18 @@ class CandidateExtractor:
             unigrams = self.extract_unigrams(doc)
 
             ngrams = self.filter_stopwords(ngrams)
-            ngrams = self.filter_tokenizer(ngrams, self.ngram_max_length)
 
-            unigrams = self.filter_tokenizer(unigrams, self.uni_subtoken_threshold)
+            unigrams = self.filter_tokenizer(unigrams)
 
-            all_ngrams.extend(ngrams)
             all_unigrams.extend(unigrams)
+            all_ngrams.extend(ngrams)
 
-        return all_unigrams, all_ngrams
+        unigram_grouped = self.group_candidates(all_unigrams)
+        ngram_grouped = self.group_candidates(all_ngrams)
 
-    def extract_multiwords(self, doc):
+        return unigram_grouped, ngram_grouped
+
+    def extract_multiwords(self, doc: Doc) -> list[Tuple[Span, Span]]:
         candidate_tuples = []
         matches = self.matcher(doc, as_spans=True)
 
@@ -151,7 +156,7 @@ class CandidateExtractor:
 
         return candidate_tuples
 
-    def extract_unigrams(self, doc):
+    def extract_unigrams(self, doc: Doc) -> list[Tuple[Span, Span]]:
         candidate_tuples = []
         matches = self.uni_matcher(doc, as_spans=True)
 
@@ -161,7 +166,9 @@ class CandidateExtractor:
 
         return candidate_tuples
 
-    def filter_stopwords(self, ngram_tuples):
+    def filter_stopwords(
+        self, ngram_tuples: list[Tuple[Span, Span]]
+    ) -> list[Tuple[Span, Span]]:
         filtered = []
         for span, sent in ngram_tuples:
             tokens = [
@@ -175,10 +182,24 @@ class CandidateExtractor:
                 filtered.append((span, sent))
         return filtered
 
-    def filter_tokenizer(self, candidate_tuples, subtoken_threshold):
+    def filter_tokenizer(
+        self, candidate_tuples: list[Tuple[Span, Span]]
+    ) -> list[Tuple[Span, Span]]:
         filtered = []
         for span, sent in candidate_tuples:
             subtokens = tokenizer.tokenize(span.text)
-            if len(subtokens) <= subtoken_threshold:
+            if len(subtokens) <= self.uni_subtoken_threshold:
                 filtered.append((span, sent))
         return filtered
+
+    def group_candidates(
+        self, candidate_tuples: list[Tuple[Span, Span]]
+    ) -> dict[str, list[str]]:
+        # restructuring the candidate tuples now that POS info isn't needed
+        grouped = defaultdict(list)
+
+        for span, sent in candidate_tuples:
+            text = span.text
+            key = text.lower() if not text.islower() else text
+            grouped.setdefault(key, []).append(sent.text)
+        return grouped

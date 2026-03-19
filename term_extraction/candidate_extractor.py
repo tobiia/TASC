@@ -16,6 +16,11 @@ nlp = spacy.load("en_core_web_sm", disable=["ner", "parser", "lemmatizer"])
 # prevent spacy from stopping on long docs
 nlp.max_length = 2_000_000
 
+from spacy.lang.char_classes import ALPHA, ALPHA_LOWER, ALPHA_UPPER
+from spacy.lang.char_classes import CONCAT_QUOTES, LIST_ELLIPSES, LIST_ICONS
+from spacy.util import compile_infix_regex
+from operator import itemgetter
+
 # TODO ensure hyphens are extracted as unigrams
 # TODO error-checking
 
@@ -81,9 +86,9 @@ class CandidateExtractor:
         self,
         path=None,
         text=None,
-        stop_words=None,
+        stop_words=stop_words,
         ngram_max_length=4,
-        uni_subtoken_threshold=3,
+        uni_subtoken_threshold=4,
     ):
         self.path = path
         self.text = text
@@ -97,6 +102,23 @@ class CandidateExtractor:
         self.uni_matcher = Matcher(nlp.vocab)
         self.uni_matcher.add("UNIGRAM_PATTERN", [[{"POS": {"IN": list(K)}}]])
 
+        # infix pattern taken from: https://github.com/term-extraction-project/multi_word_expressions/blob/main/extractors/english.py
+        # changes the tokenizer so that it does not separate words with hyphens
+        infixes = (
+            LIST_ELLIPSES
+            + LIST_ICONS
+            + [
+                r"(?<=[0-9])[+\\-\\*^](?=[0-9-])",
+                r"(?<=[{al}{q}])\\.(?=[{au}{q}])".format(
+                    al=ALPHA_LOWER, au=ALPHA_UPPER, q=CONCAT_QUOTES
+                ),
+                r"(?<=[{a}]),(?=[{a}])".format(a=ALPHA),
+                r"(?<=[{a}0-9])[:<>=/](?=[{a}])".format(a=ALPHA),
+            ]
+        )
+        infix_re = compile_infix_regex(infixes)
+        nlp.tokenizer.infix_finditer = infix_re.finditer
+
     def stream_corpus(self, path: str):
         for filename in listdir(path):
             full_path = join(path, filename)
@@ -104,6 +126,17 @@ class CandidateExtractor:
                 yield f.read()
 
     def clean_text(self, text: str) -> str:
+        normal = ["-", '"', "'"]
+        dashes = ["-", "−", "‐"]
+        double_quotes = ['"', "“", "”", "„", "„", "„"]
+        single_quotes = ["'", "`", "´", "’", "‘", "’"]
+
+        i = -1
+        for char_list in [dashes, double_quotes, single_quotes]:
+            i += 1
+            for j in range(len(char_list)):
+                text = text.replace(char_list[j], normal[i])
+
         text = text.strip()
         text = text.replace("  ", " ")
         text = text.replace(" -", "-").replace(" - ", "-")

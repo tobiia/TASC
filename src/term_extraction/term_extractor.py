@@ -1,14 +1,18 @@
+import os
 import random
 import numpy as np
 from tqdm import tqdm
 import torch
 from transformers import AutoModel, AutoTokenizer
 from collections import defaultdict
-from candidate_extractor import CandidateExtractor
-from util import l2_normalize
 from multiprocessing import Pool, cpu_count
 from typing import Tuple
 from models import CandidateSummary, TermEmbeddings, TermSummary
+
+from candidate_extractor import CandidateExtractor
+from english import EnglishPhraseExtractor
+
+# FIXME UNINSTALL NLTK!
 
 # from qdrant_client import QdrantClient
 # from qdrant_client.http import models
@@ -16,23 +20,37 @@ from models import CandidateSummary, TermEmbeddings, TermSummary
 
 # NOTE --> can try fasttext?
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.abspath(os.path.join(current_dir, ".."))
+
 
 class TermExtractor:
     def __init__(
         self,
-        corpus_path,
+        corpus_path: str,
         # stop_words,
         model_name="sentence-transformers/all-mpnet-base-v2",
+        gen_model_name="microsoft/mpnet-base",
         max_seq_length=384,
-        topic_score_thres=0.4,
+        topic_threshold=0.4,
+        self_sim_threshold=0.5,
+        context_diff_thresold=0.3,
     ):
         self.corpus_path = corpus_path
         # self.stop_words = stop_words  # stop word list
         self.max_seq_length = max_seq_length
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
         self.model.eval()
-        self.topic_score_thres = topic_score_thres
+
+        self.gen_tokenizer = AutoTokenizer.from_pretrained(gen_model_name)
+        self.gen_model = AutoModel.from_pretrained(gen_model_name)
+        self.gen_model.eval()
+
+        self.topic_threshold = topic_threshold
+        self.self_sim_threshold = self_sim_threshold
+        self.context_diff_thresold = context_diff_thresold
 
     # Dict: [cand, list[sentences]]
     def extract_candidates(self) -> Tuple[dict[str, list[str]], dict[str, list[str]]]:
@@ -41,6 +59,9 @@ class TermExtractor:
         unigram_candidates, ngram_candidates = candidate_extractor.process_corpus()
 
         return unigram_candidates, ngram_candidates
+
+    def l2_normalize(self, x):
+        return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
 
     def mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]
@@ -82,7 +103,7 @@ class TermExtractor:
             model_output, encoded_input["attention_mask"]
         )
         sentence_embeddings = sentence_embeddings.cpu().numpy()
-        sentence_embeddings = l2_normalize(sentence_embeddings)
+        sentence_embeddings = self.l2_normalize(sentence_embeddings)
 
         # regroup
         tokens_list = [
@@ -148,13 +169,13 @@ class TermExtractor:
             model_output_sent, encoded_input_sent["attention_mask"]
         )
         sentence_embeddings = sentence_embeddings.cpu().numpy()
-        sentence_embeddings = l2_normalize(sentence_embeddings)
+        sentence_embeddings = self.l2_normalize(sentence_embeddings)
 
         candidate_embeddings = self.mean_pooling(
             model_output_cand, encoded_input_cand["attention_mask"]
         )
         candidate_embeddings = candidate_embeddings.cpu().numpy()
-        candidate_embeddings = l2_normalize(candidate_embeddings)
+        candidate_embeddings = self.l2_normalize(candidate_embeddings)
 
         # Build index groups per candidate (handles unordered dict)
         groups = defaultdict(list)
@@ -212,11 +233,11 @@ class TermExtractor:
             raise ValueError(f"No embeddings found for candidate: {candidate}")
 
         all_embeds = np.vstack(all_embeds)
-        all_embeds = l2_normalize(all_embeds)
+        all_embeds = self.l2_normalize(all_embeds)
 
         if mode == "mean":
             return candidate, TermEmbeddings(
-                word_embed=l2_normalize(np.mean(all_embeds, axis=0)),
+                word_embed=self.l2_normalize(np.mean(all_embeds, axis=0)),
                 sent_embeds=info.sent_embeds,
             )
         else:
@@ -255,11 +276,11 @@ class TermExtractor:
         self, word_embeddings: dict[str, TermSummary], max_sample_size=5000
     ):
         ss_score = {}
+        filtered_candidates = {}
 
         for word, info in tqdm(
             word_embeddings.items(), desc="Calculating self-similarity scores..."
         ):
-            # NOTE check the dimensions for all these ndarrays, not sure if this is ok...
             X = info.word_embeds
             N = X.shape[0]
 
@@ -284,15 +305,20 @@ class TermExtractor:
             ss = (np.sum(sim_matrix) - N) / (N * (N - 1))
             ss_score[word] = float(round(ss, 3))
 
-        return ss_score
+            if ss <= self.self_sim_threshold:
+                filtered_candidates[word] = info
+
+        return filtered_candidates, ss_score
 
     def contextualized_vs_general(
-        self, candidate_embeddings: dict[str, TermEmbeddings], model, tokenizer
+        self,
+        candidate_embeddings: dict[str, TermEmbeddings],
     ):
+
         diff_scores = {}
         all_candidates = list(candidate_embeddings.keys())
 
-        encoded_input = tokenizer(
+        encoded_input = self.gen_tokenizer(
             all_candidates,
             padding="max_length",
             truncation=True,
@@ -301,23 +327,28 @@ class TermExtractor:
         )
 
         with torch.no_grad():
-            model_output = model(**encoded_input)
+            model_output = self.gen_model(**encoded_input)
 
         general_embeddings = self.mean_pooling(
             model_output, encoded_input["attention_mask"]
         )
         general_embeddings = general_embeddings.cpu().numpy()
-        general_embeddings = l2_normalize(general_embeddings)
+        general_embeddings = self.l2_normalize(general_embeddings)
 
         context_embeddings = np.vstack(
             [candidate_embeddings[c].word_embed for c in all_candidates]
         )
 
         cos_sims = np.sum(context_embeddings * general_embeddings, axis=1)
-
         diff_scores = dict(zip(all_candidates, 1 - cos_sims))
 
-        return diff_scores
+        filtered_candidates = {
+            c: candidate_embeddings[c]
+            for c, score in diff_scores.items()
+            if score >= self.context_diff_thresold
+        }
+
+        return filtered_candidates, diff_scores
 
     # input: dict [str, tuple[word embedding, List[sentence embeddings]]]
     def topic_score(
@@ -352,10 +383,8 @@ class TermExtractor:
 
             topic_scores[word] = float(score)
 
-            if score <= self.topic_score_thres:
+            if score >= self.topic_threshold:
                 filtered_candidates[word] = info
-
-            cand_idx += 1
 
         return filtered_candidates, topic_scores
 
@@ -378,5 +407,44 @@ class TermExtractor:
 
         return ssc_scores
 
-    def extract_terms(self) -> list[str]:
-        return ["BOO!"]
+    def extract_terms(
+        self,
+        use_ngrams: bool = True,
+        mode: str = "mean",  # mean or all
+        compute_topic: bool = True,
+        compute_self_sim: bool = False,
+        compute_context_diff: bool = False,
+    ):
+        unigram_candidates, ngram_candidates = self.extract_candidates()
+        candidates = ngram_candidates if use_ngrams else unigram_candidates
+
+        if not candidates:
+            return []
+
+        # dict[str, CandidateSummary]
+        encoded = self.encode(candidates)
+
+        # either TermEmbeddings aka "contextualized" single embedding
+        # or TermSummary aka embeddings for each context
+        term_candidates = self.create_word_embeddings(encoded, mode=mode)
+
+        results = {}
+
+        # requires TermEmbeddings
+        if compute_topic:
+            extracted_terms, topic_scores = self.topic_score(term_candidates)
+            results["topic_scores"] = topic_scores
+
+        # requires TermSummary
+        if compute_self_sim:
+            extracted_terms, ss_scores = self.self_similarity(extracted_terms)
+            results["self_similarity"] = ss_scores
+
+        # requires TermEmbeddings
+        if compute_context_diff:
+            extracted_terms, diff_scores = self.contextualized_vs_general(
+                extracted_terms,
+            )
+            results["context_diff"] = diff_scores
+
+        return extracted_terms, results

@@ -3,42 +3,25 @@ import os
 import pandas as pd
 import csv
 
-# from term_extractor import TermExtractor
-from english import EnglishPhraseExtractor
-
-from candidate_extractor import CandidateExtractor
+from candidate_extractor import EnglishPhraseExtractor
 
 # from term_extractor import TermExtractor
 import os
 
 #  --------------------------Download ACTER dataset------------------------------------------
 
-domain = "corp"
-
-texts = []
-file_names = []
-
 # Extract texts  as list
 current_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
 
-folder_path = (
+domain = "corp"
+
+path = (
     src_dir + "/ACTER/en/" + domain + "/annotated/texts_tokenised"
 )  # unannotated_texts       annotated/texts_tokenised
 
-file_list = os.listdir(folder_path)
-
-for filename in file_list:
-    if filename.endswith(".txt"):
-        file_path = os.path.join(folder_path, filename)
-        with open(file_path, "r") as file:
-            text = file.read()
-            texts.append(text.replace("  ", " ").replace(" -", "-").replace(" - ", "-"))
-
-all_texts = " .".join(texts)
-
 # Extract terms as list
-
+# NOTE CHANGE IF NEEDED
 true_terms = []
 ann_path = (
     src_dir
@@ -136,13 +119,14 @@ def evaluation(domain, text, true_terms):
     # ood_terms = df.loc[df["label"] == "OOD_Term", "term"].to_list()
     # named_entities = df.loc[df["label"] == "Named_Entity", "term"].to_list()"""
 
-    # base_extractor = EnglishPhraseExtractor(text, cohision_filter=True)
+    # NOTE logic for returning lists w no sentences
+    # base_extractor = EnglishPhraseExtractor(text)
     # unigrams, ngrams = base_extractor.extract_candidates()
     # extracted_terms = unigrams + ngrams
 
     # MY METHOD
-    base_extractor = CandidateExtractor(text)
-    unigrams_dict, ngrams_dict = base_extractor.extract()
+    base_extractor = EnglishPhraseExtractor(text)
+    unigrams_dict, ngrams_dict = base_extractor.extract_candidates()
     extracted_terms = list(unigrams_dict.keys()) + list(ngrams_dict.keys())
 
     E = set(extracted_terms)
@@ -157,9 +141,9 @@ def evaluation(domain, text, true_terms):
         G, E, print_results=False
     )
 
-    save_set_to_csv(true_positives, "true_positives.csv")
-    save_set_to_csv(false_positives, "false_positives.csv")
-    save_set_to_csv(false_negatives, "false_negatives.csv")
+    # save_set_to_csv(true_positives, "true_positives.csv")
+    # save_set_to_csv(false_positives, "false_positives.csv")
+    # save_set_to_csv(false_negatives, "false_negatives.csv")
 
 
 def save_set_to_csv(data_set, file_path):
@@ -170,4 +154,4 @@ def save_set_to_csv(data_set, file_path):
             writer.writerow([item])
 
 
-evaluation("corp", all_texts, true_terms_all)
+evaluation("corp", path, true_terms_all)

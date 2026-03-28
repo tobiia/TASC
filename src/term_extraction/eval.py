@@ -6,54 +6,6 @@ import csv
 from candidate_extractor import EnglishPhraseExtractor
 
 # from term_extractor import TermExtractor
-import os
-
-#  --------------------------Download ACTER dataset------------------------------------------
-
-# Extract texts  as list
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
-
-domain = "corp"
-
-path = (
-    src_dir + "/ACTER/en/" + domain + "/annotated/texts_tokenised"
-)  # unannotated_texts       annotated/texts_tokenised
-
-# Extract terms as list
-# NOTE CHANGE IF NEEDED
-true_terms = []
-ann_path = (
-    src_dir
-    + "/ACTER/en/"
-    + domain
-    + "/annotated/annotations/unique_annotation_lists/"
-    + domain
-    + "_en_terms.tsv"
-)
-with open(ann_path, "r", newline="") as tsv_file:
-    reader = csv.reader(tsv_file, delimiter="\t")
-    for row in reader:
-        true_terms.append(row[0].lower())
-
-
-true_terms_all = set(
-    [w.lower().replace("  ", " ").replace("- ", "-") for w in true_terms]
-)
-true_terms_mwe = set(
-    [w for w in true_terms_all if (len(w.split(" ")) > 1)]
-    + [w for w in true_terms_all if len(w.split("-")) > 1]
-)  # True Phrase Terms
-true_terms_uni = set(
-    [w for w in true_terms_all if w not in true_terms_mwe]
-)  # True Unigrams Terms
-
-print("True terms all: ", len(true_terms_all))
-print("True terms uni: ", len(true_terms_uni))
-print("True terms mwe: ", len(true_terms_mwe))
-
-
-#  --------------------------Text for ALYA ------------------------------------------
 
 
 def calculate_metrics(true_terms, extracted_terms):
@@ -97,21 +49,48 @@ def compare_sets(true_terms, extracted_terms, print_results=False):
     return true_positives, false_positives, false_negatives
 
 
-def evaluation(domain, text, true_terms):
-    """# ACTER corpus
-    corpus_path = src_dir + "/ACTER/en/" + domain + "/annotated/texts_tokenised"
+# specifically for the ACTER dataset
+def evaluation(domain):
 
-    # true terms from ACTER
-    term_path = (
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    src_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
+
+    path = (
+        src_dir + "/ACTER/en/" + domain + "/annotated/texts_tokenised"
+    )  # unannotated_texts       annotated/texts_tokenised
+
+    # Extract terms as list
+    # NOTE CHANGE IF NEEDED
+    true_terms = []
+    ann_path = (
         src_dir
         + "/ACTER/en/"
         + domain
-        + "/annotated/annotations/unique_annotation_lists/corp_en_tokenised_terms.tsv"
+        + "/annotated/annotations/unique_annotation_lists/"
+        + domain
+        + "_en_terms.tsv"
     )
+    with open(ann_path, "r", newline="") as tsv_file:
+        reader = csv.reader(tsv_file, delimiter="\t")
+        for row in reader:
+            true_terms.append(row[0].lower())
 
-    true_terms = []
+    true_terms_all = set(
+        [w.lower().replace("  ", " ").replace("- ", "-") for w in true_terms]
+    )
+    true_terms_mwe = set(
+        [w for w in true_terms_all if (len(w.split(" ")) > 1)]
+        + [w for w in true_terms_all if len(w.split("-")) > 1]
+    )  # True Phrase Terms
+    true_terms_uni = set(
+        [w for w in true_terms_all if w not in true_terms_mwe]
+    )  # True Unigrams Terms
 
-    df = pd.read_table(term_path, sep="\t", header=None)
+    print("True terms all: ", len(true_terms_all))
+    print("True terms uni: ", len(true_terms_uni))
+    print("True terms mwe: ", len(true_terms_mwe))
+
+    """df = pd.read_table(term_path, sep="\t", header=None)
     df.columns = ["term", "label"]
     true_terms = df["term"].to_list()
     # specific_terms = df.loc[df["label"] == "Specific_Term", "term"].to_list()
@@ -119,13 +98,7 @@ def evaluation(domain, text, true_terms):
     # ood_terms = df.loc[df["label"] == "OOD_Term", "term"].to_list()
     # named_entities = df.loc[df["label"] == "Named_Entity", "term"].to_list()"""
 
-    # NOTE logic for returning lists w no sentences
-    # base_extractor = EnglishPhraseExtractor(text)
-    # unigrams, ngrams = base_extractor.extract_candidates()
-    # extracted_terms = unigrams + ngrams
-
-    # MY METHOD
-    base_extractor = EnglishPhraseExtractor(text)
+    base_extractor = EnglishPhraseExtractor(path)
     unigrams_dict, ngrams_dict = base_extractor.extract_candidates()
     extracted_terms = list(unigrams_dict.keys()) + list(ngrams_dict.keys())
 
@@ -154,4 +127,4 @@ def save_set_to_csv(data_set, file_path):
             writer.writerow([item])
 
 
-evaluation("corp", path, true_terms_all)
+evaluation("corp")

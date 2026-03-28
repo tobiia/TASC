@@ -3,13 +3,11 @@
 
 from dataclasses import dataclass, field
 import numpy as np
-from spacy.tokens import Span
 
 
 @dataclass
 class CandidateSummary:
-    tok_sents: list = field(default_factory=list)
-    tok_embeds: list = field(default_factory=list)  # list of ndarrays
+    sentence_list: list = field(default_factory=list)
     sent_embeds: np.ndarray = field(default_factory=lambda: np.array([]))
 
 

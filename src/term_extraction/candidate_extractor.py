@@ -11,13 +11,6 @@ from spacy.lang.char_classes import CONCAT_QUOTES, LIST_ELLIPSES, LIST_ICONS
 from spacy.util import compile_infix_regex
 import pandas as pd
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-src_dir = os.path.abspath(os.path.join(current_dir, ".."))
-
-stop_path = os.path.abspath(os.path.join(current_dir, "stop_words_en.txt"))
-with open(stop_path, encoding="utf-8") as f:
-    stop_words = set(f.read().split(","))
-
 # Parts of speech templates
 pos_tag_patterns = [
     "PROPN",
@@ -397,7 +390,7 @@ class EnglishPhraseExtractor:
     def __init__(
         self,
         path,
-        stop_words=stop_words,
+        stop_word_file="stop_words_en.txt",
         list_seq=pos_tag_patterns,
         cohision_filter=True,
         additional_text="1",
@@ -405,11 +398,11 @@ class EnglishPhraseExtractor:
         f_req_sc=3,
     ):
         self.path = path  # text in original case
+
         self.cohision_filter = cohision_filter  #  Enable or disable the cohesive filter
         self.additional_text = additional_text  # if there is additional text, it is used to calculate frequencies, terms are NOT extracted from it
         self.f_req_sc = f_req_sc  # rectified frequency threshold
         self.f_raw_sc = f_raw_sc  # raw frequency threshold
-        self.stop_words = stop_words  # stop word list
         self.list_seq = list_seq  # list of part of speech patterns
         self.model_nlp = spacy.load(
             "en_core_web_sm", disable=["ner", "parser"]
@@ -417,6 +410,18 @@ class EnglishPhraseExtractor:
         self.model_nlp.add_pipe("sentencizer")
         # prevent spacy from stopping on long docs
         self.model_nlp.max_length = 2_000_000
+
+        # FIXME may not work depending on how file is called
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        src_dir = os.path.abspath(os.path.join(current_dir, ".."))
+
+        self.stop_word_file = stop_word_file
+        stop_path = os.path.abspath(os.path.join(src_dir, self.stop_word_file))
+        if os.path.exists(stop_path):
+            with open(stop_path, encoding="utf-8") as f:
+                self.stop_words = set(f.read().split(","))
+        else:
+            self.stop_words = set()
 
     def get_corpus(self, path: str) -> str:
         file_list = os.listdir(path)
@@ -434,7 +439,6 @@ class EnglishPhraseExtractor:
         all_texts = " .".join(texts)
         return all_texts
 
-    # NOTE edited to extract unigrams as well
     def extract_candidates(self) -> Tuple[dict[str, list[str]], dict[str, list[str]]]:
 
         # Change the tokenizer so that it does not separate words with hyphens.
@@ -620,7 +624,7 @@ class EnglishPhraseExtractor:
                 continue
             w = token.text.lower()
             if (
-                w in stop_words
+                w in self.stop_words
                 or w[0] in punc_all
                 or w[-1] in punc_all
                 or not set(w).isdisjoint(punc_without)

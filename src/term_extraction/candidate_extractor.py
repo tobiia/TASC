@@ -482,7 +482,8 @@ class EnglishPhraseExtractor:
             temp_mwe_list = filter_ngrams_by_pos_tag(
                 sent, self.list_seq
             )  # Part-of-speech extraction
-            # REVIEW COMMENTED OUT
+            # REVIEW COMMENTED OUT --> this is so extremely slow b/c nlp is called on
+            # THOUSANDS of tokens with no benefit
             """ temp_mwe_list = filter_propn_noun(
                 temp_mwe_list, nlp
             )  #  filtering from changing parts of speech """

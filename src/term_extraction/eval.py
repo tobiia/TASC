@@ -1,11 +1,8 @@
 import csv
 import os
-import pandas as pd
 import csv
 
-from candidate_extractor import EnglishPhraseExtractor
-
-# from term_extractor import TermExtractor
+from term_extractor import TermExtractor
 
 
 def calculate_metrics(true_terms, extracted_terms):
@@ -50,7 +47,7 @@ def compare_sets(true_terms, extracted_terms, print_results=False):
 
 
 # specifically for the ACTER dataset
-def evaluation(domain):
+def evaluation(domain, contextualized):
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     src_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
@@ -98,9 +95,28 @@ def evaluation(domain):
     # ood_terms = df.loc[df["label"] == "OOD_Term", "term"].to_list()
     # named_entities = df.loc[df["label"] == "Named_Entity", "term"].to_list()"""
 
-    base_extractor = EnglishPhraseExtractor(path)
+    """ base_extractor = EnglishPhraseExtractor(path)
     unigrams_dict, ngrams_dict = base_extractor.extract_candidates()
-    extracted_terms = list(unigrams_dict.keys()) + list(ngrams_dict.keys())
+    extracted_terms = list(unigrams_dict.keys()) + list(ngrams_dict.keys()) """
+
+    # cache_path = f"cache_{contextualized}_{domain}.npz"
+
+    term_extractor = TermExtractor(
+        path,
+        topic_threshold=0.4,
+        context_diff_threshold=0.3,
+        self_sim_threshold=0.6,
+        ssc_threshold=0,
+    )
+    extracted_terms = term_extractor.extract_terms(
+        contextualized_mode=contextualized,
+        compute_topic=False,
+        compute_context_diff=False,
+        compute_self_sim=False,
+        compute_ssc=True,
+        use_cache=True,
+        domain=domain,
+    )
 
     E = set(extracted_terms)
     G = set(true_terms)
@@ -114,9 +130,9 @@ def evaluation(domain):
         G, E, print_results=False
     )
 
-    # save_set_to_csv(true_positives, "true_positives.csv")
-    # save_set_to_csv(false_positives, "false_positives.csv")
-    # save_set_to_csv(false_negatives, "false_negatives.csv")
+    save_set_to_csv(true_positives, "true_positives.csv")
+    save_set_to_csv(false_positives, "false_positives.csv")
+    save_set_to_csv(false_negatives, "false_negatives.csv")
 
 
 def save_set_to_csv(data_set, file_path):
@@ -127,4 +143,5 @@ def save_set_to_csv(data_set, file_path):
             writer.writerow([item])
 
 
-evaluation("corp")
+# evaluation("corp", "all")
+evaluation("corp", "all")

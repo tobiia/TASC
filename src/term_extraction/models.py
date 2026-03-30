@@ -7,7 +7,7 @@ import numpy as np
 
 @dataclass
 class CandidateSummary:
-    sentence_list: list = field(default_factory=list)
+    sentence_indices: list[int] = field(default_factory=list)
     sent_embeds: np.ndarray = field(default_factory=lambda: np.array([]))
 
 

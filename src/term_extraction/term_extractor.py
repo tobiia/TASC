@@ -1,13 +1,14 @@
+import csv
 import os
 import numpy as np
 from tqdm import tqdm
 import torch
 from transformers import AutoModel, AutoTokenizer
-from collections import defaultdict
 from typing import Tuple
 from models import CandidateSummary, TermEmbeddings, TermSummary
 
 from candidate_extractor import EnglishPhraseExtractor
+from term_cache import EmbeddingCache
 
 # from qdrant_client import QdrantClient
 # from qdrant_client.http import models
@@ -29,17 +30,26 @@ Typical usage example:
 """
 
 
+def save_set_to_csv(data_set, file_path):
+    with open(file_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["term"])
+        for item in sorted(data_set):
+            writer.writerow([item])
+
+
 class TermExtractor:
     def __init__(
         self,
         corpus_path: str,
-        stop_words_path: str | None,
+        stop_words_path: str = "stop_words_en.txt",
         max_seq_length=384,
         batch_size=64,
         model_name="sentence-transformers/all-mpnet-base-v2",
-        topic_threshold=0.4,
-        self_sim_threshold=0.5,
+        topic_threshold=0.4,  # NOTE from paper
         context_diff_threshold=0.3,
+        self_sim_threshold=0.3,  # NOTE from paper
+        ssc_threshold=0,  # NOTE from paper, pos v neg
     ):
         self.corpus_path = corpus_path
         self.stop_words_path = stop_words_path
@@ -51,15 +61,17 @@ class TermExtractor:
         self.model.eval()
 
         self.topic_threshold = topic_threshold
-        self.self_sim_threshold = self_sim_threshold
         self.context_diff_threshold = context_diff_threshold
+        self.self_sim_threshold = self_sim_threshold
+        self.ssc_threshold = ssc_threshold
 
         special_tokens = set(self.tokenizer.special_tokens_map.values())
         special_tokens.update(self.tokenizer.added_tokens_encoder.keys())
         self.special_tokens = list(special_tokens)
 
-        # maps sentences to their token ids and token embeddings
-        self.sentence_cache: dict[str, tuple[list[str], np.ndarray]] = {}
+        # maps sentence index (int) to token ids and token embeddings
+        self.sentence_cache: dict[int, tuple[list[str], np.ndarray]] = {}
+        self.error_terms = set()  # set that collects any terms dropped b/c of errors
 
     def extract_candidates(self) -> Tuple[dict[str, list[str]], dict[str, list[str]]]:
         """Extracts candidate terms from the corpus.
@@ -71,17 +83,17 @@ class TermExtractor:
             sentences. The first are the unigrams, second are the ngrams. For example:
             {"corporation": ["I hate corporations", "I love corporations"]}
         """
-
-        # FIXME how do i call stop words??
-        candidate_extractor = EnglishPhraseExtractor(path=self.corpus_path)
+        candidate_extractor = EnglishPhraseExtractor(
+            path=self.corpus_path, stop_word_file=self.stop_words_path
+        )
         unigram_candidates, ngram_candidates = candidate_extractor.extract_candidates()
 
         return unigram_candidates, ngram_candidates
 
-    def l2_normalize(self, x):
+    def _l2_normalize(self, x):
         return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
 
-    def mean_pooling(self, model_output, attention_mask):
+    def _mean_pooling(self, model_output, attention_mask):
         token_embeddings = model_output[0]  # input ids
         input_mask_expanded = (
             attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
@@ -90,12 +102,13 @@ class TermExtractor:
             input_mask_expanded.sum(1), min=1e-9
         )
 
-    def create_embeddings(
+    def _create_embeddings(
         self,
         texts: list[str],
         tokenizer=None,
         model=None,
-        store_cache: bool = False,
+        sentence_cache: bool = False,
+        sentence_to_idx: dict[str, int] | None = None,
     ) -> np.ndarray:
         """Creates mean-pooled sentence embeddings.
 
@@ -103,12 +116,13 @@ class TermExtractor:
         tokenizer and sentence embedding model unless another is given.
 
         Args:
-            store_cache:
+            sentence_cache:
                 If True then, for each text, its token IDs and token embeddings will be
                 used to construct word embeddings for each word within. These are then
-                stored in a cache dict with the sentences as keys and a Tuple of
-                (list[words], ndarray[word embeddings]). If contextualized word
-                embeddings need to be constructed, this decreases complexity.
+                stored in self.sentence_cache keyed by integer index (via sentence_to_idx)
+                as a Tuple of (list[words], ndarray[word embeddings]). Requires
+                sentence_to_idx to be provided. If contextualized word embeddings need
+                to be constructed, this decreases complexity.
 
         Returns:
             Numpy array of all the embeddings stacked and L2 normalized
@@ -119,7 +133,11 @@ class TermExtractor:
 
         all_embeddings = []
 
-        for batch_start in range(0, len(texts), self.batch_size):
+        batch_iter = tqdm(
+            range(0, len(texts), self.batch_size),
+            desc="************* embedding batches...",
+        )
+        for batch_start in batch_iter:
             batch = texts[batch_start : batch_start + self.batch_size]
             encoded_input = tokenizer(
                 batch,
@@ -133,31 +151,34 @@ class TermExtractor:
                 model_output = model(**encoded_input)
 
             # pool token embeddings to create sentence embeddings
-            sent_embeds = self.mean_pooling(
+            sent_embeds = self._mean_pooling(
                 model_output, encoded_input["attention_mask"]
             )
             all_embeddings.append(sent_embeds.cpu().numpy())
 
             # reconstruct word embeddings from token embeddings and store
-            # sentences are the keys to the cache dict
-            if store_cache:
+            # integer indices (via sentence_to_idx) are the keys to the cache
+            if sentence_cache and sentence_to_idx is not None:
                 batch_tok_embeds = model_output.last_hidden_state.cpu().numpy()
                 for i, sent in enumerate(batch):
                     tokens = tokenizer.convert_ids_to_tokens(
                         encoded_input["input_ids"][i]
                     )
                     token_embeds = batch_tok_embeds[i]
-                    symbols, symbol_embeds = self.reconstruct_words(
+                    symbols, symbol_embeds = self._reconstruct_words(
                         tokens, token_embeds
                     )
-                    words, word_embeds = self.merge_hyphenated(
+                    words, word_embeds = self._merge_hyphenated(
                         [s.lower() for s in symbols], symbol_embeds
                     )
-                    self.sentence_cache[sent] = (words, word_embeds)
+                    self.sentence_cache[sentence_to_idx[sent]] = (
+                        words,
+                        word_embeds,
+                    )
 
-        return self.l2_normalize(np.concatenate(all_embeddings, axis=0))
+        return self._l2_normalize(np.concatenate(all_embeddings, axis=0))
 
-    def encode(
+    def _encode(
         self, candidates: dict[str, list[str]], model_name: str | None = None
     ) -> dict[str, CandidateSummary]:
         """Encodes all candidate term occurrences and sentences
@@ -184,83 +205,51 @@ class TermExtractor:
 
         # all embeddings stacked, axis 0 indices match unique_sentences
         # + sentence_to_idx
-        sentence_embeddings = self.create_embeddings(
-            unique_sentences, tokenizer=tokenizer, model=model, store_cache=True
+        sentence_embeddings = self._create_embeddings(
+            unique_sentences,
+            tokenizer=tokenizer,
+            model=model,
+            sentence_cache=True,
+            sentence_to_idx=sentence_to_idx,
         )
+
+        # NOTE removed for now
+        """ candidate_sent_indices = {
+            cand: np.array([sentence_to_idx[s] for s in sents], dtype=int)
+            for cand, sents in candidates.items()
+        } """
 
         # for each candidate, create an array of the indices of its occurrence
         # sentences in sentence_embeddings using sentence_to_idx
-        candidate_sent_indices = {
-            cand: np.array([sentence_to_idx[s] for s in sents], dtype=int)
-            for cand, sents in candidates.items()
-        }
+        candidate_sent_indices = {}
+        for cand, sents in candidates.items():
+            try:
+                candidate_sent_indices[cand] = np.array(
+                    [sentence_to_idx[s] for s in sents], dtype=int
+                )
+            except KeyError:
+                self.error_terms.add(cand)
 
         # create CandidateSummary dataclass for holding info
         encoded_candidates = {}
         # indices is an ndarray
         for cand, indices in candidate_sent_indices.items():
+            if len(indices) == 0:
+                self.error_terms.add(cand)
+                continue
             # fancy indexing
             # gets the embeddings/rows at each index
             sent_embeds = sentence_embeddings[indices]
             encoded_candidates[cand] = CandidateSummary(
-                sentence_list=candidates[cand],
+                sentence_indices=indices.tolist(),
                 sent_embeds=sent_embeds,
             )
         return encoded_candidates
 
-    def encode_general(
-        self, candidates: dict[str, list[str]], model_name: str | None = None
-    ) -> dict[str, TermEmbeddings]:
-        """Encodes all candidate terms and sentences
-
-        Creates mean-pooled embeddings for all candidate terms and their corresponding sentences. Same as encode() but this creates only one word embedding for the candidates. Use encode() for contextualized word embeddings.
-
-        Returns:
-            Dict with candidates as keys and TermEmbeddings as values. TermEmbeddings are Tuples containing the word embedding and ndarray of sentence embeddings for each candidate.
-        """
-
-        # look at encode() if you want to understand how this works
-
-        tokenizer = self.tokenizer
-        model = self.model
-
-        if model_name:
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModel.from_pretrained(model_name)
-            model.eval()
-
-        all_sentences = [s for sents in candidates.values() for s in sents]
-        unique_sentences = list(dict.fromkeys(all_sentences))
-        sentence_to_idx = {s: i for i, s in enumerate(unique_sentences)}
-
-        sentence_embeddings = self.create_embeddings(
-            unique_sentences, tokenizer=tokenizer, model=model
-        )
-
-        indiv_candidates = list(candidates.keys())
-        candidate_embeddings = self.create_embeddings(
-            indiv_candidates, tokenizer=tokenizer, model=model
-        )
-
-        candidate_sent_indices = {
-            cand: np.array([sentence_to_idx[s] for s in sents], dtype=int)
-            for cand, sents in candidates.items()
-        }
-
-        encoded_candidates = {}
-        for i, cand in enumerate(indiv_candidates):
-            idx = candidate_sent_indices[cand]
-            sent_embeds = sentence_embeddings[idx]
-            encoded_candidates[cand] = TermEmbeddings(
-                word_embed=candidate_embeddings[i],
-                sent_embeds=sent_embeds,
-            )
-        return encoded_candidates
-
-    def create_word_embeddings(
+    def _create_word_embeddings(
         self,
         encoded_candidates: dict[str, CandidateSummary],
-        mode: str = "mean",
+        contextualized_mode: str = "mean",
     ) -> dict[str, TermEmbeddings | TermSummary]:
         """Create word embeddings for all candidates
 
@@ -268,8 +257,7 @@ class TermExtractor:
         comprising them.
 
         Args:
-            NOTE should probably be changed to a flag
-            mode: whether a single contextualized or multiple word
+            contextualized_mode: whether a single contextualized or multiple word
                 embeddings for each word are created
 
         Returns:
@@ -279,20 +267,30 @@ class TermExtractor:
         """
 
         candidate_embeddings = {}
-        for candidate, info in encoded_candidates.items():
-            _, emb = self.token_to_word(candidate, info, mode)
-            if emb is not None:
-                candidate_embeddings[candidate] = emb
+        for candidate, info in tqdm(
+            encoded_candidates.items(), desc="************* building word embeddings..."
+        ):
+            try:
+                _, emb = self._token_to_word(candidate, info, contextualized_mode)
+                if emb is not None:
+                    candidate_embeddings[candidate] = emb
+                else:
+                    self.error_terms.add(candidate)
+            except Exception:
+                self.error_terms.add(candidate)
         return candidate_embeddings
 
-    def token_to_word(self, candidate: str, info: CandidateSummary, mode: str):
+    def _token_to_word(
+        self, candidate: str, info: CandidateSummary, contextualized_mode: str
+    ):
         """Collects and returns all constructed word embeddings for a candidate
 
         Matches word embeddings with the given single candidate.
 
         Args:
-            mode: whether a single contextualized or multiple word
-                embeddings for each word are created
+            contextualized_mode: If True, function creates a single contextualized
+            word embedding. If False, returns multiple word embeddings for each
+            word occurrence
 
         Returns:
             Dict with candidates as keys and TermEmbeddings OR TermSummarys
@@ -306,9 +304,10 @@ class TermExtractor:
         # for the sliding window
         k = len(candidate_subwords)
 
-        for sent in info.sentence_list:
-            # use cached tokens & embeddings
-            words, word_embeds = self.sentence_cache[sent]
+        # each index maps to the tokens and token embeddings of a sentence
+        # so we're looping over all sentences containing the candidate
+        for idx in info.sentence_indices:
+            words, word_embeds = self.sentence_cache[idx]
             for i in range(len(words) - k + 1):
                 if words[i : i + k] == candidate_subwords:
                     # add to list of all word embeddings for candidate
@@ -317,17 +316,18 @@ class TermExtractor:
                     all_embeds.append(
                         np.mean(word_embeds[i : i + k], axis=0, keepdims=True)
                     )
+                    break  # limit to 1 occurrence per sentence
 
         if not all_embeds:
             return candidate, None
 
         # stack the word embeddings of each occurrence of the candidate together
         all_embeds = np.vstack(all_embeds)
-        all_embeds = self.l2_normalize(all_embeds)
+        all_embeds = self._l2_normalize(all_embeds)
 
-        if mode == "mean":
+        if contextualized_mode == "mean":
             return candidate, TermEmbeddings(
-                word_embed=self.l2_normalize(np.mean(all_embeds, axis=0)),
+                word_embed=self._l2_normalize(np.mean(all_embeds, axis=0)),
                 sent_embeds=info.sent_embeds,
             )
         else:
@@ -335,7 +335,7 @@ class TermExtractor:
                 word_embeds=all_embeds, sent_embeds=info.sent_embeds
             )
 
-    def reconstruct_words(self, tokens, embeddings):
+    def _reconstruct_words(self, tokens, embeddings):
         """Constructs word embeddings of a sentence from token embeddings
 
         Word embeddings are the mean average of the token embeddings
@@ -377,14 +377,14 @@ class TermExtractor:
         # corresponding embeddings, the indices will match
         return words, np.vstack(word_embeds)
 
-    def merge_hyphenated(self, words, word_embeds):
+    def _merge_hyphenated(self, words, word_embeds):
         """Re-join words that BERT split at hyphens/apostrophes into their original form.
 
         Re-join words that BERT split at hyphens/apostrophes into their original form.
         ex. candidate -> ["it-developers"]
         tokenizer -> ["it", "-", "developers"]
-        reconstruct_words -> ["it", "-", "developers"] with embedding for each part.
-        merge_hyphenated -> ["it-developers"] with averaged embedding for whole word.
+        _reconstruct_words -> ["it", "-", "developers"] with embedding for each part.
+        _merge_hyphenated -> ["it-developers"] with averaged embedding for whole word.
 
         Returns:
             the merged word list and corresponding embeddings.
@@ -414,7 +414,8 @@ class TermExtractor:
         ss_score = {}
 
         for word, info in tqdm(
-            word_embeddings.items(), desc="Calculating self-similarity scores..."
+            word_embeddings.items(),
+            desc="************* calculating self-similarity scores...",
         ):
             X = info.word_embeds
             # N = number of candidate occurrences and thus word embeddings
@@ -450,7 +451,7 @@ class TermExtractor:
     ):
         all_candidates = list(candidate_embeddings.keys())
 
-        general_embeddings = self.create_embeddings(all_candidates)
+        general_embeddings = self._create_embeddings(all_candidates)
 
         context_embeddings = np.vstack(
             [candidate_embeddings[c].word_embed for c in all_candidates]
@@ -468,7 +469,9 @@ class TermExtractor:
     ):
         topic_scores = {}
 
-        for word, info in candidate_tuples.items():
+        for word, info in tqdm(
+            candidate_tuples.items(), desc="************* calculating topic scores..."
+        ):
 
             cand_embedding = info.word_embed
 
@@ -500,42 +503,79 @@ class TermExtractor:
         ssv = self.self_similarity(vanilla_embeddings, max_sample_size=max_sample_size)
 
         ssc_scores = {}
-        for word in ssf.keys():
+        for word in tqdm(
+            ssf.keys(), desc="************* calculating self similarity changes..."
+        ):
             if word in ssv:
                 ssc_scores[word] = round(ssf[word] - ssv[word], 3)
 
         return ssc_scores
 
+    # NOTE uses word embeddings reconstructed from token embeddings
     def extract_terms(
         self,
-        use_ngrams: bool = True,
-        mode: str = "mean",  # mean or all
-        compute_topic: bool = True,
-        compute_self_sim: bool = False,
+        contextualized_mode: str = "all",  # mean or all
+        compute_topic: bool = False,
         compute_context_diff: bool = False,
+        compute_self_sim: bool = True,
         compute_ssc: bool = False,
+        use_cache=True,
+        domain="corp",
     ):
-        unigram_candidates, ngram_candidates = self.extract_candidates()
-        candidates = ngram_candidates if use_ngrams else unigram_candidates
 
-        if not candidates:
-            return []
+        # ex. cache_path="cache_context_corp.npz",
+        cache = EmbeddingCache(cache_domain=domain, cache_context=contextualized_mode)
 
-        encoded = self.encode(candidates)
+        if use_cache and os.path.exists(cache.path):
+            print("************* loading cache...")
+            term_candidates, self.sentence_cache = cache.load_cache()
+        else:
+            unigram_candidates, ngram_candidates = self.extract_candidates()
+            candidates = ngram_candidates | unigram_candidates
 
-        # either TermEmbeddings aka "contextualized" single embedding
-        # or TermSummary aka embeddings for each context
-        term_candidates = self.create_word_embeddings(encoded, mode=mode)
+            print(f"##### number candidates: {len(candidates)}")
+
+            if not candidates:
+                return []
+
+            encoded = self._encode(candidates)
+            print(f"##### number after encoding: {len(encoded)}")
+
+            term_candidates = self._create_word_embeddings(
+                encoded, contextualized_mode=contextualized_mode
+            )
+            print(f"##### number after word embeddings: {len(term_candidates)}")
+
+            print("************* creating cache...")
+            if use_cache:
+                cache.save_cache(term_candidates, self.sentence_cache)
 
         # FIXME will not be keeping all these functions, but it's like this for testing. must remember to remove pylance commands later
 
+        print("************* filtering candidates...")
         # requires TermEmbeddings
+        # TODO update topic score to use term summary and calculate the topic score using all the constructed
+        # word embeddings against their sentences. not sure if that's possible but we'll see!
         if compute_topic:
             filtered_candidates = {}
-            topic_scores = self.topic_score(term_candidates)  # type: ignore
+            # NOTE CHANGE METHOD FOR GETTING SCORE --> "mean" or "avg"
+            topic_scores = self.topic_score(term_candidates, method="avg")  # type: ignore
             for word, info in term_candidates.items():
                 if topic_scores[word] >= self.topic_threshold:
                     filtered_candidates[word] = info
+            print(f"##### number after topic score filter: {len(filtered_candidates)}")
+            save_set_to_csv(self.error_terms, "error_terms.csv")
+            return filtered_candidates
+
+        # requires TermEmbeddings
+        if compute_context_diff:
+            filtered_candidates = {}
+            diff_scores = self.contextualized_vs_general(term_candidates)  # type: ignore
+            for word, info in term_candidates.items():
+                if diff_scores[word] >= self.context_diff_threshold:
+                    filtered_candidates[word] = info
+            print(f"##### number after diff score filter: {len(filtered_candidates)}")
+            save_set_to_csv(self.error_terms, "error_terms.csv")
             return filtered_candidates
 
         # requires TermSummary
@@ -548,22 +588,19 @@ class TermExtractor:
                 # CAST says thres = 0.3
                 if score is None or score >= self.self_sim_threshold:
                     filtered_candidates[word] = info
-            return filtered_candidates
-
-        # requires TermEmbeddings
-        if compute_context_diff:
-            filtered_candidates = {}
-            diff_scores = self.contextualized_vs_general(term_candidates)  # type: ignore
-            for word, info in term_candidates.items():
-                if diff_scores[word] >= self.context_diff_threshold:
-                    filtered_candidates[word] = info
+            print(f"##### number after self sim filter: {len(filtered_candidates)}")
+            save_set_to_csv(self.error_terms, "error_terms.csv")
             return filtered_candidates
 
         # requires TermSummary
         if compute_ssc:
-            vanilla_encoded = self.encode(candidates, model_name="microsoft/mpnet-base")
+            vanilla_encoded = self._encode(
+                term_candidates, model_name="microsoft/mpnet-base"
+            )
 
-            vanilla_candidates = self.create_word_embeddings(vanilla_encoded, mode=mode)
+            vanilla_candidates = self._create_word_embeddings(
+                vanilla_encoded, contextualized_mode=contextualized_mode
+            )
 
             filtered_candidates = {}
             ssc_scores = self.self_similarity_change(
@@ -572,8 +609,10 @@ class TermExtractor:
             for word, info in term_candidates.items():
                 score = ssc_scores.get(word)
                 # thres >= 0, positive
-                if score is None or score >= self.self_sim_threshold:
+                if score is None or score >= self.ssc_threshold:
                     filtered_candidates[word] = info
+            print(f"##### number after ssc filter: {len(filtered_candidates)}")
+            save_set_to_csv(self.error_terms, "error_terms.csv")
             return filtered_candidates
 
         return term_candidates

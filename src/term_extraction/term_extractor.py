@@ -7,7 +7,7 @@ from transformers import AutoModel, AutoTokenizer
 from typing import Tuple
 from models import CandidateSummary, TermEmbeddings, TermSummary
 
-from candidate_extractor import EnglishPhraseExtractor
+from split_candidate_extractor import CandidateExtractor
 from term_cache import EmbeddingCache
 
 # from qdrant_client import QdrantClient
@@ -45,11 +45,14 @@ class TermExtractor:
         stop_words_path: str = "stop_words_en.txt",
         max_seq_length=384,
         batch_size=64,
-        model_name="sentence-transformers/all-mpnet-base-v2",
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
         topic_threshold=0.4,  # NOTE from paper
         context_diff_threshold=0.3,
         self_sim_threshold=0.3,  # NOTE from paper
         ssc_threshold=0,  # NOTE from paper, pos v neg
+        var_threshold=0.5,
+        ccs_threshold=1.0,
+        stop_threshold=1.0,
     ):
         self.corpus_path = corpus_path
         self.stop_words_path = stop_words_path
@@ -64,6 +67,9 @@ class TermExtractor:
         self.context_diff_threshold = context_diff_threshold
         self.self_sim_threshold = self_sim_threshold
         self.ssc_threshold = ssc_threshold
+        self.var_threshold = var_threshold
+        self.ccs_threshold = ccs_threshold
+        self.stop_threshold = stop_threshold
 
         special_tokens = set(self.tokenizer.special_tokens_map.values())
         special_tokens.update(self.tokenizer.added_tokens_encoder.keys())
@@ -73,22 +79,23 @@ class TermExtractor:
         self.sentence_cache: dict[int, tuple[list[str], np.ndarray]] = {}
         self.error_terms = set()  # set that collects any terms dropped b/c of errors
 
-    def extract_candidates(self) -> Tuple[dict[str, list[str]], dict[str, list[str]]]:
+    def get_unigram_cands(self) -> dict[str, list[str]]:
         """Extracts candidate terms from the corpus.
 
-        Retrieves candidate terms from the corpus using EnglishPhraseExtractor.
+        Retrieves candidate terms from the corpus using CandidateExtractor.
 
         Returns:
             2 dicts mapping candidates to their corresponding list of
             sentences. The first are the unigrams, second are the ngrams. For example:
             {"corporation": ["I hate corporations", "I love corporations"]}
         """
-        candidate_extractor = EnglishPhraseExtractor(
-            path=self.corpus_path, stop_word_file=self.stop_words_path
+        candidate_extractor = CandidateExtractor(
+            path=self.corpus_path,
+            stop_words_path=self.stop_words_path,
+            cohesion_filter=False,
         )
-        unigram_candidates, ngram_candidates = candidate_extractor.extract_candidates()
 
-        return unigram_candidates, ngram_candidates
+        return candidate_extractor.unigram_candidates()
 
     def _l2_normalize(self, x):
         return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
@@ -135,7 +142,7 @@ class TermExtractor:
 
         batch_iter = tqdm(
             range(0, len(texts), self.batch_size),
-            desc="************* embedding batches...",
+            desc="******************************************** embedding batches...",
         )
         for batch_start in batch_iter:
             batch = texts[batch_start : batch_start + self.batch_size]
@@ -213,12 +220,6 @@ class TermExtractor:
             sentence_to_idx=sentence_to_idx,
         )
 
-        # NOTE removed for now
-        """ candidate_sent_indices = {
-            cand: np.array([sentence_to_idx[s] for s in sents], dtype=int)
-            for cand, sents in candidates.items()
-        } """
-
         # for each candidate, create an array of the indices of its occurrence
         # sentences in sentence_embeddings using sentence_to_idx
         candidate_sent_indices = {}
@@ -249,7 +250,7 @@ class TermExtractor:
     def _create_word_embeddings(
         self,
         encoded_candidates: dict[str, CandidateSummary],
-        contextualized_mode: str = "mean",
+        contextualized_mode: str = "all",
     ) -> dict[str, TermEmbeddings | TermSummary]:
         """Create word embeddings for all candidates
 
@@ -268,7 +269,8 @@ class TermExtractor:
 
         candidate_embeddings = {}
         for candidate, info in tqdm(
-            encoded_candidates.items(), desc="************* building word embeddings..."
+            encoded_candidates.items(),
+            desc="******************************************** building word embeddings...",
         ):
             try:
                 _, emb = self._token_to_word(candidate, info, contextualized_mode)
@@ -306,6 +308,7 @@ class TermExtractor:
 
         # each index maps to the tokens and token embeddings of a sentence
         # so we're looping over all sentences containing the candidate
+
         for idx in info.sentence_indices:
             words, word_embeds = self.sentence_cache[idx]
             for i in range(len(words) - k + 1):
@@ -323,14 +326,15 @@ class TermExtractor:
 
         # stack the word embeddings of each occurrence of the candidate together
         all_embeds = np.vstack(all_embeds)
-        all_embeds = self._l2_normalize(all_embeds)
 
+        # we only normalize the word embeddings at the VERY end to ensure each part of the word's magnitude contributes to the embedding for semantics
         if contextualized_mode == "mean":
             return candidate, TermEmbeddings(
                 word_embed=self._l2_normalize(np.mean(all_embeds, axis=0)),
                 sent_embeds=info.sent_embeds,
             )
         else:
+            all_embeds = self._l2_normalize(all_embeds)
             return candidate, TermSummary(
                 word_embeds=all_embeds, sent_embeds=info.sent_embeds
             )
@@ -408,21 +412,92 @@ class TermExtractor:
             i += 1
         return merged_words, np.array(merged_embeds)
 
+    def contextualized_vs_general(
+        self,
+        candidate_embeddings: dict[str, TermSummary],
+        max_sample_size=50,
+    ):
+        all_candidates = list(candidate_embeddings.keys())
+        general_embeddings = self._create_embeddings(
+            all_candidates
+        )  # (n_candidates, H)
+
+        cvg_scores = {}
+        for i, candidate in tqdm(
+            enumerate(candidate_embeddings),
+            desc="******************************************** calculating context vs general scores...",
+        ):
+
+            general_emb = general_embeddings[i]
+            context_embs = candidate_embeddings[
+                candidate
+            ].word_embeds  # (n_contexts, H)
+
+            # subsample if too many
+            N = context_embs.shape[0]
+            if N > max_sample_size:
+                idx = np.random.choice(N, max_sample_size, replace=False)
+                context_embs = context_embs[idx]
+
+            cos_sims = context_embs @ general_emb  # (n_contexts,)
+            cvg_scores[candidate] = np.mean(1 - cos_sims)
+
+        return cvg_scores
+
+    def topic_score(
+        self,
+        candidate_embeddings: dict[str, TermSummary],
+        # REVIEW change while testing here
+        method="max",
+        max_sample_size=50,
+    ):
+        topic_scores = {}
+
+        for word, info in tqdm(
+            candidate_embeddings.items(),
+            desc="******************************************** calculating topic scores...",
+        ):
+            X = info.sent_embeds
+            Y = info.word_embeds
+            N = X.shape[0]
+
+            # subsample if too many
+            if N > max_sample_size:
+                idx = np.random.choice(N, max_sample_size, replace=False)
+                X = X[idx]
+                Y = Y[idx]
+                N = X.shape[0]
+
+            # cos sim of each sent-word pair
+            cos_sim = np.sum(X * Y, axis=1)
+
+            if method == "max":
+                # t-extractor method
+                score = cos_sim.max()
+            elif method == "mean":
+                score = cos_sim.mean()
+            else:
+                raise ValueError(f"Unknown method {method}")
+
+            topic_scores[word] = float(score)
+
+        return topic_scores
+
+    # only for high frequency terms
     def self_similarity(
-        self, word_embeddings: dict[str, TermSummary], max_sample_size=5000
+        self, word_embeddings: dict[str, TermSummary], max_sample_size=500, min_count=50
     ):
         ss_score = {}
 
         for word, info in tqdm(
             word_embeddings.items(),
-            desc="************* calculating self-similarity scores...",
+            desc="******************************************** calculating self-similarity scores...",
         ):
             X = info.word_embeds
             # N = number of candidate occurrences and thus word embeddings
             N = X.shape[0]
 
-            # can't calculate cosim on just 1
-            if N < 2:
+            if N < min_count:
                 continue
 
             # subsample if too many
@@ -446,50 +521,6 @@ class TermExtractor:
 
         return ss_score
 
-    def contextualized_vs_general(
-        self, candidate_embeddings: dict[str, TermEmbeddings]
-    ):
-        all_candidates = list(candidate_embeddings.keys())
-
-        general_embeddings = self._create_embeddings(all_candidates)
-
-        context_embeddings = np.vstack(
-            [candidate_embeddings[c].word_embed for c in all_candidates]
-        )
-        # calculate cosine similarity between the general word embeddings
-        # and all their corresponding contextualized word embedding
-        cos_sims = np.sum(context_embeddings * general_embeddings, axis=1)
-        diff_scores = dict(zip(all_candidates, 1 - cos_sims))
-        return diff_scores
-
-    def topic_score(
-        self,
-        candidate_tuples: dict[str, TermEmbeddings],
-        method="max",
-    ):
-        topic_scores = {}
-
-        for word, info in tqdm(
-            candidate_tuples.items(), desc="************* calculating topic scores..."
-        ):
-
-            cand_embedding = info.word_embed
-
-            cos_sims = np.dot(
-                info.sent_embeds, cand_embedding
-            )  # shape: (num_occurrences,)
-
-            if method == "max":
-                score = np.max(cos_sims)
-            elif method == "avg":
-                score = np.mean(cos_sims)
-            else:
-                raise ValueError(f"Unknown method {method}")
-
-            topic_scores[word] = float(score)
-
-        return topic_scores
-
     def self_similarity_change(
         self,
         fine_tuned_embeddings: dict[str, TermSummary],
@@ -497,48 +528,159 @@ class TermExtractor:
         max_sample_size=5000,
     ):
 
-        ssf = self.self_similarity(
-            fine_tuned_embeddings, max_sample_size=max_sample_size
-        )
+        shared_candidates = {
+            k: fine_tuned_embeddings[k]
+            for k in fine_tuned_embeddings
+            if k in vanilla_embeddings
+        }
+
+        ssf = self.self_similarity(shared_candidates, max_sample_size=max_sample_size)
         ssv = self.self_similarity(vanilla_embeddings, max_sample_size=max_sample_size)
 
         ssc_scores = {}
         for word in tqdm(
-            ssf.keys(), desc="************* calculating self similarity changes..."
+            ssf.keys(),
+            desc="******************************************** calculating self similarity changes...",
         ):
             if word in ssv:
                 ssc_scores[word] = round(ssf[word] - ssv[word], 3)
 
         return ssc_scores
 
-    # NOTE uses word embeddings reconstructed from token embeddings
-    def extract_terms(
-        self,
-        contextualized_mode: str = "all",  # mean or all
-        compute_topic: bool = False,
-        compute_context_diff: bool = False,
-        compute_self_sim: bool = True,
-        compute_ssc: bool = False,
-        use_cache=True,
-        domain="corp",
+    def variance(
+        self, word_embeddings: dict[str, TermSummary], max_sample_size=500, min_count=3
     ):
+        variances_scores = {}
 
-        # ex. cache_path="cache_context_corp.npz",
-        cache = EmbeddingCache(cache_domain=domain, cache_context=contextualized_mode)
+        for word, info in tqdm(
+            word_embeddings.items(),
+            desc="******************************************** calculating variances...",
+        ):
+            embeddings = info.word_embeds
+            N = embeddings.shape[0]
+
+            if N < min_count:
+                continue
+
+            # subsample if too many
+            if N > max_sample_size:
+                idx = np.random.choice(N, max_sample_size, replace=False)
+                embeddings = embeddings[idx]
+                N = embeddings.shape[0]
+
+            centroid = self._l2_normalize(embeddings.mean(axis=0))
+
+            # squared distances to centroid
+            sq_dists = np.sum((embeddings - centroid) ** 2, axis=1)
+
+            # mean squared distance
+            variance = np.mean(sq_dists)
+            variances_scores[word] = float(round(variance, 3))
+
+        return variances_scores
+
+    def cross_context_stability(
+        self,
+        word_embeddings: dict[str, TermSummary],
+        min_count: int = 2,
+    ) -> dict[str, float]:
+        scores = {}
+
+        for word, info in tqdm(
+            word_embeddings.items(),
+            desc="******************************************** calculating cross-context stability...",
+        ):
+            N = info.word_embeds.shape[0]
+            if N < max(min_count, 2):
+                continue
+
+            word_embeds = info.word_embeds  # (N, D), already L2 normalized
+            sent_embeds = info.sent_embeds  # (N, D), already L2 normalized
+
+            # pairwise cosine similarities via matrix multiply (both already normalized)
+            word_sim_matrix = word_embeds @ word_embeds.T  # (N, N)
+            sent_sim_matrix = sent_embeds @ sent_embeds.T  # (N, N)
+
+            # upper triangle only — avoid double-counting pairs and self-similarity on diagonal
+            triu_idx = np.triu_indices(N, k=1)
+            word_sims = word_sim_matrix[triu_idx]  # (num_pairs,)
+            sent_sims = sent_sim_matrix[triu_idx]  # (num_pairs,)
+
+            # only keep pairs where the sentence contexts are actually different
+            # if sent_sim is near 1.0, the two sentences are nearly identical and
+            # the pair tells us nothing about stability across varied contexts
+            varied_mask = sent_sims < 0.95
+            if not np.any(varied_mask):
+                continue
+
+            word_sims = word_sims[varied_mask]
+            sent_sims = sent_sims[varied_mask]
+
+            # ratio: how stable is the term relative to how different the contexts are
+            # sent_sim is clipped away from zero to prevent division instability
+            # when sent_sim is low (very different contexts) and word_sim is high,
+            # the ratio is high — exactly the signal we want
+            correlation = np.corrcoef(word_sims, sent_sims)[0, 1]
+
+            # handle edge case where all word_sims or sent_sims are identical (zero variance)
+            # corrcoef returns nan in that case
+            if np.isnan(correlation):
+                continue
+
+            scores[word] = round(float(1 - correlation), 3)
+
+        return scores
+
+    def stopword_distance_score(
+        self, candidate_embedding: dict[str, TermSummary], sw_embeddings: np.ndarray
+    ):
+        stop_scores = {}
+        for word, info in tqdm(
+            candidate_embedding.items(),
+            desc="******************************************** calculating stop word distance...",
+        ):
+            word_embeds = info.word_embeds
+
+            # calculate cosine similarity between the general word embeddings
+            # and all their corresponding contextualized word embedding
+            cos_sims = word_embeds @ sw_embeddings.T
+            stop_scores[word] = float(round(cos_sims.mean(), 3))
+
+        return stop_scores
+
+    def embed_setup(
+        self,
+        domain="corp",
+        contextualized_mode: str = "all",  # mean or all
+        gram_type="uni",  # uni or n
+        use_cache=True,
+    ):
+        print(
+            f"******************************************** setting up {gram_type}gram embedding data..."
+        )
+        # ex. cache_path="cache_corp_all_uni.npz",
+        cache = EmbeddingCache(
+            cache_domain=domain, cache_context=contextualized_mode, gram=gram_type
+        )
 
         if use_cache and os.path.exists(cache.path):
-            print("************* loading cache...")
-            term_candidates, self.sentence_cache = cache.load_cache()
+            print("******************************************** loading from cache...")
+            term_candidates, self.sentence_cache, orig_candidates = cache.load_cache()
         else:
-            unigram_candidates, ngram_candidates = self.extract_candidates()
-            candidates = ngram_candidates | unigram_candidates
+            print("!!!!!!!!!!!! no cache found! getting data...")
+            if gram_type == "uni":
+                orig_candidates = self.get_unigram_cands()
+            else:
+                raise ValueError("I haven't implemented this yet lol")
 
-            print(f"##### number candidates: {len(candidates)}")
+            print(f"##### number candidates: {len(orig_candidates)}")
 
-            if not candidates:
-                return []
+            if not orig_candidates:
+                raise ValueError(
+                    "!!!!!!!!!!!!!! something went wrong with candidate extraction"
+                )
 
-            encoded = self._encode(candidates)
+            encoded = self._encode(orig_candidates)
             print(f"##### number after encoding: {len(encoded)}")
 
             term_candidates = self._create_word_embeddings(
@@ -546,73 +688,98 @@ class TermExtractor:
             )
             print(f"##### number after word embeddings: {len(term_candidates)}")
 
-            print("************* creating cache...")
+            print("******************************************** caching...")
             if use_cache:
-                cache.save_cache(term_candidates, self.sentence_cache)
+                cache.save_cache(term_candidates, self.sentence_cache, orig_candidates)
 
-        # FIXME will not be keeping all these functions, but it's like this for testing. must remember to remove pylance commands later
+        return term_candidates, orig_candidates
 
-        print("************* filtering candidates...")
-        # requires TermEmbeddings
-        # TODO update topic score to use term summary and calculate the topic score using all the constructed
-        # word embeddings against their sentences. not sure if that's possible but we'll see!
-        if compute_topic:
-            filtered_candidates = {}
-            # NOTE CHANGE METHOD FOR GETTING SCORE --> "mean" or "avg"
-            topic_scores = self.topic_score(term_candidates, method="avg")  # type: ignore
-            for word, info in term_candidates.items():
-                if topic_scores[word] >= self.topic_threshold:
-                    filtered_candidates[word] = info
-            print(f"##### number after topic score filter: {len(filtered_candidates)}")
-            save_set_to_csv(self.error_terms, "error_terms.csv")
-            return filtered_candidates
+    # topic, context, selfsim, var, ccs
+    def score_function(self, func, threshold, term_candidates, *args):
+        filtered_candidates = {}
+        scores = func(term_candidates, *args)  # type: ignore
+        for word, info in term_candidates.items():
+            score = scores.get(word)
+            if score is None or scores[word] >= threshold:
+                filtered_candidates[word] = info
+        print(f"##### number after filter: {len(filtered_candidates)}")
+        return filtered_candidates
 
-        # requires TermEmbeddings
-        if compute_context_diff:
-            filtered_candidates = {}
-            diff_scores = self.contextualized_vs_general(term_candidates)  # type: ignore
-            for word, info in term_candidates.items():
-                if diff_scores[word] >= self.context_diff_threshold:
-                    filtered_candidates[word] = info
-            print(f"##### number after diff score filter: {len(filtered_candidates)}")
-            save_set_to_csv(self.error_terms, "error_terms.csv")
-            return filtered_candidates
+    def uni_test_filter(
+        self,
+        func,
+        thresholds,
+        domain="corp",
+        contextualized_mode="all",
+        gram_type="uni",
+        use_cache=True,
+        compute_ssc=False,
+        compute_stop=False,
+    ):
+        term_candidates, orig_candidates = self.embed_setup(
+            domain=domain,
+            contextualized_mode=contextualized_mode,
+            gram_type=gram_type,
+            use_cache=use_cache,
+        )
+        save_set_to_csv(self.error_terms, "error_terms.csv")
 
-        # requires TermSummary
-        if compute_self_sim:
-            filtered_candidates = {}
-            ss_scores = self.self_similarity(term_candidates)  # type: ignore
-            for word, info in term_candidates.items():
-                score = ss_scores.get(word)
-                # meaningful = high self sim
-                # CAST says thres = 0.3
-                if score is None or score >= self.self_sim_threshold:
-                    filtered_candidates[word] = info
-            print(f"##### number after self sim filter: {len(filtered_candidates)}")
-            save_set_to_csv(self.error_terms, "error_terms.csv")
-            return filtered_candidates
+        for threshold in thresholds:
 
-        # requires TermSummary
-        if compute_ssc:
-            vanilla_encoded = self._encode(
-                term_candidates, model_name="microsoft/mpnet-base"
-            )
+            if compute_ssc:
+                vanilla_encoded = self._encode(
+                    orig_candidates, model_name="nreimers/MiniLM-L6-H384-uncased"
+                )
 
-            vanilla_candidates = self._create_word_embeddings(
-                vanilla_encoded, contextualized_mode=contextualized_mode
-            )
+                vanilla_candidates = self._create_word_embeddings(
+                    vanilla_encoded, contextualized_mode=contextualized_mode
+                )
 
-            filtered_candidates = {}
-            ssc_scores = self.self_similarity_change(
-                term_candidates, vanilla_candidates  # type: ignore
-            )
-            for word, info in term_candidates.items():
-                score = ssc_scores.get(word)
-                # thres >= 0, positive
-                if score is None or score >= self.ssc_threshold:
-                    filtered_candidates[word] = info
-            print(f"##### number after ssc filter: {len(filtered_candidates)}")
-            save_set_to_csv(self.error_terms, "error_terms.csv")
-            return filtered_candidates
+                filtered_candidates = self.score_function(
+                    self.self_similarity_change,
+                    threshold,
+                    term_candidates,
+                    vanilla_candidates,
+                )
 
-        return term_candidates
+            elif compute_stop:
+                if os.path.exists(self.stop_words_path):
+                    with open(self.stop_words_path, encoding="utf-8") as f:
+                        stop_words = set(f.read().split(","))
+                else:
+                    raise FileNotFoundError(
+                        "!!!!!!!!!! stop word file could not be opened."
+                    )
+
+                sw_embeddings = self._create_embeddings(list(stop_words))
+
+                filtered_candidates = self.score_function(
+                    self.stopword_distance_score,
+                    threshold,
+                    term_candidates,
+                    sw_embeddings,
+                )
+
+            else:
+                filtered_candidates = self.score_function(
+                    func, threshold, term_candidates
+                )
+
+        return filtered_candidates
+
+    def extract_unigrams(
+        self,
+        domain="corp",
+        contextualized_mode="all",
+        gram_type="uni",
+        use_cache=True,
+    ):
+        term_candidates, orig_candidates = self.embed_setup(
+            domain=domain,
+            contextualized_mode=contextualized_mode,
+            gram_type=gram_type,
+            use_cache=use_cache,
+        )
+        save_set_to_csv(self.error_terms, "error_terms.csv")
+
+        pass

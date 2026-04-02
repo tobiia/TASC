@@ -16,6 +16,7 @@ pos_tag_patterns = [
     "PROPN",
     "NOUN",
     "ADJ",
+    "VERB",  # new
     [["PROPN", "NOUN"], "*"],
     ["ADJ", "*", ["PROPN", "NOUN"], "*"],
     ["ADJ", "*"],
@@ -28,27 +29,6 @@ pos_tag_patterns = [
     [["ADJ", "PROPN", "NOUN"], "*", "PART", ["PROPN", "NOUN"], "*"],
     [["VERB", "ADV", "X"]],
     [["ADJ", "PROPN", "NOUN"], "*", "ADP", ["PROPN", "NOUN"], "*"],
-]
-
-pos_tag_patterns_updated = [
-    # --- KEEP THESE (for unigrams) ---
-    "PROPN",
-    "NOUN",
-    "ADJ",
-    "VERB",
-    # --- (optional) keep useful old ones ---
-    [["PROPN", "NOUN"], "*"],
-    ["ADJ", "*"],
-    # --- ADD NEW FLEXIBLE PATTERNS ---
-    ["ADJ", "*", "NOUN", "*", ["ADP", "NOUN"], "*"],
-    ["NOUN", "*", ["ADP", "NOUN"], "*"],
-    ["VERB", "*", ["ADJ", "NOUN"], "*"],
-    ["ADJ", "ADJ", "NOUN"],
-    ["ADJ", "NOUN"],
-    ["NOUN", "NOUN"],
-    ["PROPN", "*", "NOUN", "*"],
-    ["NOUN", "*", ["ADP", "NOUN"], "*", "NOUN"],
-    ["VERB", "*", ["ADP", "NOUN"], "*"],
 ]
 
 # Setting up punctuation lists to check, punc_without does not contain hyphens and apostrophes as they can be part of phrases. punc_all is needed to check if there is a hyphen at the beginning or end of a phrase
@@ -390,16 +370,19 @@ class EnglishPhraseExtractor:
     def __init__(
         self,
         path,
-        stop_word_file="stop_words_en.txt",
+        stop_words_path="stop_words_en.txt",
         list_seq=pos_tag_patterns,
-        cohision_filter=True,
+        cohesion_filter=True,
+        ngrams_filtered=3,
         additional_text="1",
         f_raw_sc=9,
         f_req_sc=3,
     ):
         self.path = path  # text in original case
 
-        self.cohision_filter = cohision_filter  #  Enable or disable the cohesive filter
+        self.cohesion_filter = cohesion_filter  #  Enable or disable the cohesive filter
+        # the minimum n for ngrams that will go through the filter
+        self.ngrams_filtered = ngrams_filtered
         self.additional_text = additional_text  # if there is additional text, it is used to calculate frequencies, terms are NOT extracted from it
         self.f_req_sc = f_req_sc  # rectified frequency threshold
         self.f_raw_sc = f_raw_sc  # raw frequency threshold
@@ -415,8 +398,8 @@ class EnglishPhraseExtractor:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         src_dir = os.path.abspath(os.path.join(current_dir, ".."))
 
-        self.stop_word_file = stop_word_file
-        stop_path = os.path.abspath(os.path.join(src_dir, self.stop_word_file))
+        self.stop_words_path = stop_words_path
+        stop_path = os.path.abspath(os.path.join(src_dir, self.stop_words_path))
         if os.path.exists(stop_path):
             with open(stop_path, encoding="utf-8") as f:
                 self.stop_words = set(f.read().split(","))
@@ -519,8 +502,21 @@ class EnglishPhraseExtractor:
         ]
         candidates = [i for i in candidates if len(num_set.intersection(set(i))) == 0]
 
+        candidate_map = {term: phrase_sents.get(term, []) for term in set(candidates)}
+
         # if the cohesive filter is on
-        if self.cohision_filter == True:
+        if self.cohesion_filter == True:
+            short_mwes = {
+                k: v
+                for k, v in candidate_map.items()
+                if len(k.split()) <= self.ngrams_filtered
+            }
+            long_mwes = {
+                k: v
+                for k, v in candidate_map.items()
+                if len(k.split()) > self.ngrams_filtered
+            }
+
             token_list = [tok.text.lower() for tok in doc]
             if (
                 len(self.additional_text) > 10
@@ -611,8 +607,9 @@ class EnglishPhraseExtractor:
                 if ((i[-1] not in punc_without) and (i[-1] not in string.punctuation))
             ]
 
-        # ----------------------------------------------------------------------------------------
         candidate_map = {term: phrase_sents.get(term, []) for term in set(candidates)}
+
+        # ----------------------------------------------------------------------------------------
 
         uni_pos_set = set(
             pattern for pattern in self.list_seq if isinstance(pattern, str)
@@ -634,9 +631,12 @@ class EnglishPhraseExtractor:
                 continue
             unigram_map[w].append(token.sent.text.lower())
 
-        # hyphenated/apostrophe unigrams go into candidates
-        for term in set(unigram_map):
-            if "-" in term or "'" in term:
-                candidate_map.setdefault(term, list(unigram_map[term]))
+        # hyphenated unigrams go into candidates
+        for term in list(unigram_map.keys()):
+            if "-" in term:
+                candidate_map.setdefault(term, []).extend(unigram_map.pop(term))
+
+        print(f"#### number of unigrams extracted: {len(unigram_map)}")
+        print(f"#### number of mwe extracted: {len(candidate_map)}")
 
         return dict(unigram_map), candidate_map

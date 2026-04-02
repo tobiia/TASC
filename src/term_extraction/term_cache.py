@@ -4,16 +4,18 @@ from models import TermEmbeddings, TermSummary
 
 
 class EmbeddingCache:
-    def __init__(self, cache_domain, cache_context):
+    # corp, equi, htfl, wind
+    # mean, all
+    # uni, ngram
+    def __init__(self, cache_domain, cache_context, gram):
         self.cache_context = cache_context
-        self.path = f"cache_{cache_domain}_{cache_context}.npz"
-        self.base_path = f"cache_{cache_domain}"
+        self.path = f"cache_{cache_domain}_{cache_context}_{gram}.npz"
 
-    def save_cache(self, term_candidates, sentence_cache):
+    def save_cache(self, term_candidates, sentence_cache, candidates):
         if self.cache_context == "mean":
-            self._save_mean_cache(term_candidates, sentence_cache)
+            self._save_mean_cache(term_candidates, sentence_cache, candidates)
         else:
-            self._save_all_cache(term_candidates, sentence_cache)
+            self._save_all_cache(term_candidates, sentence_cache, candidates)
 
     def load_cache(self):
         if self.cache_context == "mean":
@@ -21,36 +23,41 @@ class EmbeddingCache:
         else:
             return self._load_all_cache()
 
-    def _save_mean_cache(self, term_candidates, sentence_cache):
-        path = self.base_path + "_mean.npz"
+    def _save_mean_cache(self, term_candidates, sentence_cache, candidates):
 
-        candidates = list(term_candidates.keys())
+        cand_keys = list(term_candidates.keys())
 
-        word_embeds = np.vstack([term_candidates[c].word_embed for c in candidates])
+        word_embeds = np.vstack([term_candidates[c].word_embed for c in cand_keys])
 
         sent_embeds_flat, sent_offsets = self._flatten_sent_embeds(
-            term_candidates, candidates
+            term_candidates, cand_keys
         )
 
         cache_words, cache_offsets, cache_embeds_flat = self._flatten_sentence_cache(
             sentence_cache
         )
 
+        cand_dict_keys, cand_dict_values_flat, cand_dict_offsets = (
+            self._flatten_candidates(candidates)
+        )
+
         self._save_common(
-            path,
-            candidates,
+            self.path,
+            cand_keys,
             word_embeds=word_embeds,
             sent_embeds_flat=sent_embeds_flat,
             sent_offsets=sent_offsets,
             cache_words=cache_words,
             cache_offsets=cache_offsets,
             cache_embeds_flat=cache_embeds_flat,
+            cand_dict_keys=cand_dict_keys,
+            cand_dict_values_flat=cand_dict_values_flat,
+            cand_dict_offsets=cand_dict_offsets,
         )
 
     def _load_mean_cache(self):
-        path = self.base_path + "_mean.npz"
 
-        data = self._load_common(path)
+        data = self._load_common(self.path)
 
         term_candidates = {}
 
@@ -69,28 +76,37 @@ class EmbeddingCache:
             data["cache_embeds_flat"],
         )
 
-        return term_candidates, sentence_cache
+        candidates = self._reconstruct_candidates(
+            data["cand_dict_keys"],
+            data["cand_dict_values_flat"],
+            data["cand_dict_offsets"],
+        )
 
-    def _save_all_cache(self, term_candidates, sentence_cache):
-        path = self.base_path + "_all.npz"
+        return term_candidates, sentence_cache, candidates
 
-        candidates = list(term_candidates.keys())
+    def _save_all_cache(self, term_candidates, sentence_cache, candidates):
+
+        cand_keys = list(term_candidates.keys())
 
         word_embeds_flat, word_offsets = self._flatten_word_embeds_all(
-            term_candidates, candidates
+            term_candidates, cand_keys
         )
 
         sent_embeds_flat, sent_offsets = self._flatten_sent_embeds(
-            term_candidates, candidates
+            term_candidates, cand_keys
         )
 
         cache_words, cache_offsets, cache_embeds_flat = self._flatten_sentence_cache(
             sentence_cache
         )
 
+        cand_dict_keys, cand_dict_values_flat, cand_dict_offsets = (
+            self._flatten_candidates(candidates)
+        )
+
         self._save_common(
-            path,
-            candidates,
+            self.path,
+            cand_keys,
             word_embeds_flat=word_embeds_flat,
             word_offsets=word_offsets,
             sent_embeds_flat=sent_embeds_flat,
@@ -98,12 +114,14 @@ class EmbeddingCache:
             cache_words=cache_words,
             cache_offsets=cache_offsets,
             cache_embeds_flat=cache_embeds_flat,
+            cand_dict_keys=cand_dict_keys,
+            cand_dict_values_flat=cand_dict_values_flat,
+            cand_dict_offsets=cand_dict_offsets,
         )
 
     def _load_all_cache(self):
-        path = self.base_path + "_all.npz"
 
-        data = self._load_common(path)
+        data = self._load_common(self.path)
 
         term_candidates = {}
 
@@ -125,7 +143,13 @@ class EmbeddingCache:
             data["cache_embeds_flat"],
         )
 
-        return term_candidates, sentence_cache
+        candidates = self._reconstruct_candidates(
+            data["cand_dict_keys"],
+            data["cand_dict_values_flat"],
+            data["cand_dict_offsets"],
+        )
+
+        return term_candidates, sentence_cache, candidates
 
     def _save_common(self, path, candidates, **arrays):
         np.savez_compressed(
@@ -166,7 +190,7 @@ class EmbeddingCache:
             # the different attribute name is the only reason this exists
             # otherwise works the same as above
             we = term_candidates[c].word_embeds
-            word_embeds_flat.append(we)
+            word_embeds_flat.append(term_candidates[c].word_embeds)
             word_offsets.append(word_offsets[-1] + len(we))
 
         return np.vstack(word_embeds_flat), np.array(word_offsets)
@@ -191,16 +215,41 @@ class EmbeddingCache:
             np.vstack(cache_embeds_flat),
         )
 
-    def _reconstruct_sentence_cache(self, words, offsets, embeds_flat):
+    def _flatten_candidates(self, candidates):
+        keys = list(candidates.keys())
+        values_flat = []
+        offsets = [0]
+
+        for k in keys:
+            sents = candidates[k]
+            values_flat.extend(sents)
+            offsets.append(offsets[-1] + len(sents))
+
+        return (
+            np.array(keys, dtype=object),
+            np.array(values_flat, dtype=object),
+            np.array(offsets),
+        )
+
+    def _reconstruct_candidates(self, keys, values_flat, offsets):
+        # short form version of the same to reconstruct word/sent embeds
+        return {
+            keys[i]: list(values_flat[offsets[i] : offsets[i + 1]])
+            for i in range(len(keys))
+        }
+
+    def _reconstruct_sentence_cache(self, words, offsets, word_embeds_flat):
         sentence_cache = {}
 
         for i in range(len(offsets) - 1):
             start = offsets[i]
             end = offsets[i + 1]
 
+            # i = idx of sentence
             sentence_cache[i] = (
+                # corresponding word and word embeddings
                 list(words[start:end]),
-                embeds_flat[start:end],
+                word_embeds_flat[start:end],
             )
 
         return sentence_cache

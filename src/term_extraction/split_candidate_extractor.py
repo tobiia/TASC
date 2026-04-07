@@ -1,15 +1,17 @@
 from collections import defaultdict
 from typing import Tuple
-
-# nltk.download("punkt")
 import string
 import spacy
 import os
+import pandas as pd
 
 from spacy.lang.char_classes import ALPHA, ALPHA_LOWER, ALPHA_UPPER
 from spacy.lang.char_classes import CONCAT_QUOTES, LIST_ELLIPSES, LIST_ICONS
 from spacy.util import compile_infix_regex
-import pandas as pd
+
+# nltk.download("punkt")
+
+from config import PROJECT_ROOT, SRC_DIR
 
 # Parts of speech templates
 pos_tag_patterns = ["PROPN", "NOUN", "ADJ", "VERB"]
@@ -377,11 +379,10 @@ class CandidateExtractor:
         # prevent spacy from stopping on long docs
         self.model_nlp.max_length = 2_000_000
 
-        # FIXME may not work depending on how file is called
         try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
+            current_dir = PROJECT_ROOT / "src" / "term_extraction"
             self.stop_words_path = stop_words_path
-            stop_path = os.path.join(current_dir, self.stop_words_path)
+            stop_path = current_dir / self.stop_words_path
             with open(stop_path, encoding="utf-8") as f:
                 self.stop_words = set(f.read().split(","))
         except FileNotFoundError:

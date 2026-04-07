@@ -4,17 +4,20 @@ import numpy as np
 from tqdm import tqdm
 import torch
 from transformers import AutoModel, AutoTokenizer
-from typing import Tuple
-from models import CandidateSummary, TermEmbeddings, TermSummary
+from term_extraction.models import CandidateSummary, TermEmbeddings, TermSummary
+from term_extraction.split_candidate_extractor import CandidateExtractor
+from term_extraction.term_cache import EmbeddingCache
 
-from split_candidate_extractor import CandidateExtractor
-from term_cache import EmbeddingCache
+# FIXME - remove later
+from transformers.utils import logging as hf_logging
+
+hf_logging.set_verbosity_error()
 
 # from qdrant_client import QdrantClient
 # from qdrant_client.http import models
 # from qdrant_client.http.models import CollectionStatus
 
-# NOTE --> can try fasttext?
+# REVIEW --> can try fasttext?
 
 """This is a pipeline for terminology extraction.
 
@@ -43,13 +46,14 @@ class TermExtractor:
         self,
         corpus_path: str,
         stop_words_path: str = "stop_words_en.txt",
-        max_seq_length=384,
+        max_seq_length=256,
         batch_size=64,
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        topic_threshold=0.4,  # NOTE from paper
+        model_name="sentence-transformers/all-mpnet-base-v2",
+        vanilla_model_name="microsoft/mpnet-base",
+        topic_threshold=0.4,
         context_diff_threshold=0.3,
-        self_sim_threshold=0.3,  # NOTE from paper
-        ssc_threshold=0,  # NOTE from paper, pos v neg
+        self_sim_threshold=0.3,
+        ssc_threshold=0,  # pos v neg
         var_threshold=0.5,
         ccs_threshold=1.0,
         stop_threshold=1.0,
@@ -62,6 +66,7 @@ class TermExtractor:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name)
         self.model.eval()
+        self.vanilla_model_name = vanilla_model_name
 
         self.topic_threshold = topic_threshold
         self.context_diff_threshold = context_diff_threshold
@@ -101,13 +106,49 @@ class TermExtractor:
         return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
 
     def _mean_pooling(self, model_output, attention_mask):
-        token_embeddings = model_output[0]  # input ids
+        token_embeddings = model_output[0]
         input_mask_expanded = (
             attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         )
         return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
             input_mask_expanded.sum(1), min=1e-9
         )
+
+    def compute_anisotropy(self, embeddings, n_samples=1000, seed=None):
+        """Compute anisoptropy baseline
+        Calculate anisotropy baseline as mean off-diagonal cosine similarity
+        over randomly sampled embeddings.
+
+        Args:
+            seed : int or None
+                Random seed for reproducibility
+
+        Returns:
+            float
+                Anisotropy baseline (mean cosine similarity of random pairs)
+        """
+
+        embeddings = np.asarray(embeddings)
+
+        N = embeddings.shape[0]
+        n_samples = min(n_samples, N)
+
+        if n_samples < 2:
+            self.anisotropy_baseline = 0
+
+        if seed is not None:
+            rng = np.random.default_rng(seed)
+
+        # random sample of indices
+        idx = rng.choice(N, size=n_samples, replace=False)
+        sample = embeddings[idx]
+
+        # cosine similarity matrix
+        sim = sample @ sample.T
+
+        # remove diagonal (self-similarity)
+        n = sim.shape[0]
+        self.anisotropy_baseline = (sim.sum() - np.trace(sim)) / (n * (n - 1))
 
     def _create_embeddings(
         self,
@@ -290,8 +331,8 @@ class TermExtractor:
         Matches word embeddings with the given single candidate.
 
         Args:
-            contextualized_mode: If True, function creates a single contextualized
-            word embedding. If False, returns multiple word embeddings for each
+            contextualized_mode: If "mean", function creates a single contextualized
+            word embedding. If "all", returns multiple word embeddings for each
             word occurrence
 
         Returns:
@@ -300,8 +341,8 @@ class TermExtractor:
             TermSummary = word embeddings for every occurrence of the word
         """
         all_embeds = []
-        # split multi-word candidates into separate words to ease
-        # reconstruction
+        matched_positions = []  # positions in sentence_indices that produced a match
+        # split multi-word candidates into separate words to ease reconstruction
         candidate_subwords = candidate.split()
         # for the sliding window
         k = len(candidate_subwords)
@@ -309,7 +350,7 @@ class TermExtractor:
         # each index maps to the tokens and token embeddings of a sentence
         # so we're looping over all sentences containing the candidate
 
-        for idx in info.sentence_indices:
+        for pos, idx in enumerate(info.sentence_indices):
             words, word_embeds = self.sentence_cache[idx]
             for i in range(len(words) - k + 1):
                 if words[i : i + k] == candidate_subwords:
@@ -319,6 +360,9 @@ class TermExtractor:
                     all_embeds.append(
                         np.mean(word_embeds[i : i + k], axis=0, keepdims=True)
                     )
+                    matched_positions.append(
+                        pos
+                    )  # i.e position = idx in the sentences list/indices
                     break  # limit to 1 occurrence per sentence
 
         if not all_embeds:
@@ -326,17 +370,19 @@ class TermExtractor:
 
         # stack the word embeddings of each occurrence of the candidate together
         all_embeds = np.vstack(all_embeds)
+        # only keep sent_embeds for sentences that actually matched to ensure word+sent embeds align
+        matched_sent_embeds = info.sent_embeds[matched_positions]
 
         # we only normalize the word embeddings at the VERY end to ensure each part of the word's magnitude contributes to the embedding for semantics
         if contextualized_mode == "mean":
             return candidate, TermEmbeddings(
                 word_embed=self._l2_normalize(np.mean(all_embeds, axis=0)),
-                sent_embeds=info.sent_embeds,
+                sent_embeds=matched_sent_embeds,
             )
         else:
             all_embeds = self._l2_normalize(all_embeds)
             return candidate, TermSummary(
-                word_embeds=all_embeds, sent_embeds=info.sent_embeds
+                word_embeds=all_embeds, sent_embeds=matched_sent_embeds
             )
 
     def _reconstruct_words(self, tokens, embeddings):
@@ -357,7 +403,7 @@ class TermExtractor:
             # ignore the special tokens of the model, ex. <cls>
             if t in self.special_tokens:
                 continue
-            # NOTE need to check if I can expand to other model types
+            # REVIEW - need to check if I can expand to other model types
             # this was specifically written for mpnet
             if t.startswith("##"):
                 frags.append(t[2:])
@@ -368,7 +414,7 @@ class TermExtractor:
                     # avg all token embeddings to get word embedding
                     word_embeds.append(np.mean(frags_emb, axis=0))
                     frags, frags_emb = [], []
-                frags = [t.lstrip("#")]
+                frags = [t]
                 frags_emb = [e]
         # get final word if there is one
         if frags:
@@ -423,12 +469,10 @@ class TermExtractor:
         )  # (n_candidates, H)
 
         cvg_scores = {}
-        for i, candidate in tqdm(
-            enumerate(candidate_embeddings),
+        for candidate, general_emb in tqdm(
+            zip(all_candidates, general_embeddings),
             desc="******************************************** calculating context vs general scores...",
         ):
-
-            general_emb = general_embeddings[i]
             context_embs = candidate_embeddings[
                 candidate
             ].word_embeds  # (n_contexts, H)
@@ -450,6 +494,7 @@ class TermExtractor:
         # REVIEW change while testing here
         method="max",
         max_sample_size=50,
+        adjust_anisotropy=True,
     ):
         topic_scores = {}
 
@@ -470,6 +515,8 @@ class TermExtractor:
 
             # cos sim of each sent-word pair
             cos_sim = np.sum(X * Y, axis=1)
+            if adjust_anisotropy and hasattr(self, "anisotropy_baseline"):
+                cos_sim = cos_sim - self.anisotropy_baseline
 
             if method == "max":
                 # t-extractor method
@@ -485,7 +532,12 @@ class TermExtractor:
 
     # only for high frequency terms
     def self_similarity(
-        self, word_embeddings: dict[str, TermSummary], max_sample_size=500, min_count=50
+        self,
+        word_embeddings: dict[str, TermSummary],
+        adjust_anisotropy=True,
+        anisotropy_value: float | None = None,
+        max_sample_size=500,
+        min_count=50,
     ):
         ss_score = {}
 
@@ -517,6 +569,11 @@ class TermExtractor:
             # subtract diagonal entries (which would be N 1s/ones = N)
             # divide by (N entries * N-1 non-diagonal pairs)
             ss = (np.sum(sim_matrix) - N) / (N * (N - 1))
+            if adjust_anisotropy and hasattr(self, "anisotropy_baseline"):
+                if anisotropy_value:
+                    ss -= anisotropy_value
+                else:
+                    ss -= self.anisotropy_baseline
             ss_score[word] = float(round(ss, 3))
 
         return ss_score
@@ -526,24 +583,51 @@ class TermExtractor:
         fine_tuned_embeddings: dict[str, TermSummary],
         vanilla_embeddings: dict[str, TermSummary],
         max_sample_size=5000,
+        adjust_anisotropy=True,
     ):
 
-        shared_candidates = {
-            k: fine_tuned_embeddings[k]
-            for k in fine_tuned_embeddings
-            if k in vanilla_embeddings
-        }
+        shared_keys = fine_tuned_embeddings.keys() & vanilla_embeddings.keys()
+        shared_fine_tuned = {k: fine_tuned_embeddings[k] for k in shared_keys}
+        shared_vanilla = {k: vanilla_embeddings[k] for k in shared_keys}
 
-        ssf = self.self_similarity(shared_candidates, max_sample_size=max_sample_size)
-        ssv = self.self_similarity(vanilla_embeddings, max_sample_size=max_sample_size)
+        # compute anisotropy baseline from the vanilla model's embeddings
+        vanilla_anisotropy = None
+        if adjust_anisotropy:
+            vanilla_embeds_list = []
+            for info in shared_vanilla.values():
+                if isinstance(info, TermSummary):
+                    vanilla_embeds_list.append(info.word_embeds)
+                elif isinstance(info, TermEmbeddings):
+                    vanilla_embeds_list.append(info.word_embed.reshape(1, -1))
+            if vanilla_embeds_list:
+                all_vanilla_embeds = np.vstack(vanilla_embeds_list)
+                N = all_vanilla_embeds.shape[0]
+                n_samples = min(1000, N)
+                idx = np.random.choice(N, size=n_samples, replace=False)
+                sample = all_vanilla_embeds[idx]
+                sim = sample @ sample.T
+                n = sim.shape[0]
+                vanilla_anisotropy = float((sim.sum() - np.trace(sim)) / (n * (n - 1)))
+                print(f"##### vanilla anisotropy baseline: {vanilla_anisotropy:.4f}")
+
+        ssf = self.self_similarity(
+            shared_fine_tuned,
+            adjust_anisotropy=adjust_anisotropy,
+            max_sample_size=max_sample_size,
+        )
+        ssv = self.self_similarity(
+            shared_vanilla,
+            adjust_anisotropy=adjust_anisotropy,
+            anisotropy_value=vanilla_anisotropy,
+            max_sample_size=max_sample_size,
+        )
 
         ssc_scores = {}
         for word in tqdm(
-            ssf.keys(),
+            ssf.keys() & ssv.keys(),
             desc="******************************************** calculating self similarity changes...",
         ):
-            if word in ssv:
-                ssc_scores[word] = round(ssf[word] - ssv[word], 3)
+            ssc_scores[word] = round(ssf[word] - ssv[word], 3)
 
         return ssc_scores
 
@@ -583,7 +667,15 @@ class TermExtractor:
         self,
         word_embeddings: dict[str, TermSummary],
         min_count: int = 2,
+        adjust_anisotropy=True,
     ) -> dict[str, float]:
+        """Score semantic stability of a term across sentence contexts
+
+        For each pair of occurrences, computes the ratio of term embedding
+        similarity to sentence embedding similarity.
+
+        CORRELATION
+        """
         scores = {}
 
         for word, info in tqdm(
@@ -594,10 +686,10 @@ class TermExtractor:
             if N < max(min_count, 2):
                 continue
 
-            word_embeds = info.word_embeds  # (N, D), already L2 normalized
-            sent_embeds = info.sent_embeds  # (N, D), already L2 normalized
+            word_embeds = info.word_embeds
+            sent_embeds = info.sent_embeds
 
-            # pairwise cosine similarities via matrix multiply (both already normalized)
+            # pairwise cosine similarities via matrix multiply
             word_sim_matrix = word_embeds @ word_embeds.T  # (N, N)
             sent_sim_matrix = sent_embeds @ sent_embeds.T  # (N, N)
 
@@ -605,6 +697,9 @@ class TermExtractor:
             triu_idx = np.triu_indices(N, k=1)
             word_sims = word_sim_matrix[triu_idx]  # (num_pairs,)
             sent_sims = sent_sim_matrix[triu_idx]  # (num_pairs,)
+            if adjust_anisotropy and hasattr(self, "anisotropy_baseline"):
+                word_sims = word_sims - self.anisotropy_baseline
+                sent_sims = sent_sims - self.anisotropy_baseline
 
             # only keep pairs where the sentence contexts are actually different
             # if sent_sim is near 1.0, the two sentences are nearly identical and
@@ -616,10 +711,6 @@ class TermExtractor:
             word_sims = word_sims[varied_mask]
             sent_sims = sent_sims[varied_mask]
 
-            # ratio: how stable is the term relative to how different the contexts are
-            # sent_sim is clipped away from zero to prevent division instability
-            # when sent_sim is low (very different contexts) and word_sim is high,
-            # the ratio is high — exactly the signal we want
             correlation = np.corrcoef(word_sims, sent_sims)[0, 1]
 
             # handle edge case where all word_sims or sent_sims are identical (zero variance)
@@ -628,6 +719,62 @@ class TermExtractor:
                 continue
 
             scores[word] = round(float(1 - correlation), 3)
+
+        return scores
+
+    def ratioed_ccs(
+        self,
+        word_embeddings: dict[str, TermSummary],
+        min_count: int = 2,
+        adjust_anisotropy=True,
+    ) -> dict[str, float]:
+        """Score semantic stability of a term across sentence contexts
+
+        For each pair of occurrences, computes the ratio of term embedding
+        similarity to sentence embedding similarity.
+
+        when sent_sim is low (very different contexts) and word_sim is high,
+        the ratio is high
+        """
+        scores = {}
+
+        for word, info in tqdm(
+            word_embeddings.items(),
+            desc="******************************************** calculating cross-context stability...",
+        ):
+            N = info.word_embeds.shape[0]
+            if N < max(min_count, 2):
+                continue
+
+            word_embeds = info.word_embeds
+            sent_embeds = info.sent_embeds
+
+            # pairwise cosine similarities via matrix multiply
+            word_sim_matrix = word_embeds @ word_embeds.T  # (N, N)
+            sent_sim_matrix = sent_embeds @ sent_embeds.T  # (N, N)
+
+            # upper triangle only — avoid double-counting pairs and self-similarity on diagonal
+            triu_idx = np.triu_indices(N, k=1)
+            word_sims = word_sim_matrix[triu_idx]  # (num_pairs,)
+            sent_sims = sent_sim_matrix[triu_idx]  # (num_pairs,)
+            if adjust_anisotropy and hasattr(self, "anisotropy_baseline"):
+                word_sims = word_sims - self.anisotropy_baseline
+                sent_sims = sent_sims - self.anisotropy_baseline
+
+            # only keep pairs where the sentence contexts are actually different
+            # if sent_sim is near 1.0, the two sentences are nearly identical and
+            # the pair tells us nothing about stability across varied contexts
+            varied_mask = sent_sims < 0.95
+            if not np.any(varied_mask):
+                continue
+
+            word_sims = word_sims[varied_mask]
+            sent_sims = sent_sims[varied_mask]
+
+            sent_sims_clipped = np.clip(sent_sims, 0.05, None)
+            ratios = word_sims / sent_sims_clipped
+
+            scores[word] = round(float(np.mean(ratios)), 3)
 
         return scores
 
@@ -676,9 +823,7 @@ class TermExtractor:
             print(f"##### number candidates: {len(orig_candidates)}")
 
             if not orig_candidates:
-                raise ValueError(
-                    "!!!!!!!!!!!!!! something went wrong with candidate extraction"
-                )
+                raise ValueError("!!!!!!!!!!!!!! error with candidate extraction.")
 
             encoded = self._encode(orig_candidates)
             print(f"##### number after encoding: {len(encoded)}")
@@ -691,6 +836,18 @@ class TermExtractor:
             print("******************************************** caching...")
             if use_cache:
                 cache.save_cache(term_candidates, self.sentence_cache, orig_candidates)
+
+        # compute anisotropy baseline from randomly sampled word embeddings
+        embeds_list = []
+        for info in term_candidates.values():
+            if isinstance(info, TermSummary):
+                embeds_list.append(info.word_embeds)
+            elif isinstance(info, TermEmbeddings):
+                embeds_list.append(info.word_embed.reshape(1, -1))
+        if embeds_list:
+            all_word_embeds = np.vstack(embeds_list)
+            self.compute_anisotropy(all_word_embeds)
+            print(f"##### anisotropy baseline: {self.anisotropy_baseline:.4f}")
 
         return term_candidates, orig_candidates
 
@@ -728,7 +885,7 @@ class TermExtractor:
 
             if compute_ssc:
                 vanilla_encoded = self._encode(
-                    orig_candidates, model_name="nreimers/MiniLM-L6-H384-uncased"
+                    orig_candidates, model_name=self.vanilla_model_name
                 )
 
                 vanilla_candidates = self._create_word_embeddings(
@@ -765,7 +922,7 @@ class TermExtractor:
                     func, threshold, term_candidates
                 )
 
-        return filtered_candidates
+            yield filtered_candidates
 
     def extract_unigrams(
         self,

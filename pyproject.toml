@@ -1,0 +1,12 @@
+[project]
+name = "term_ex"
+dynamic = ["version"]
+description = "An experimentation in terminology extraction and ontology creation"
+authors = [{ name = "Tobi Adesanya", email = "tobijadesanya@gmail.com" }]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+run = "term_extraction.main:main"

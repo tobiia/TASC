@@ -1,6 +1,6 @@
 import numpy as np
 
-from models import TermEmbeddings, TermSummary
+from term_extraction.models import TermEmbeddings, TermSummary
 
 
 class EmbeddingCache:
@@ -190,7 +190,7 @@ class EmbeddingCache:
             # the different attribute name is the only reason this exists
             # otherwise works the same as above
             we = term_candidates[c].word_embeds
-            word_embeds_flat.append(term_candidates[c].word_embeds)
+            word_embeds_flat.append(we)
             word_offsets.append(word_offsets[-1] + len(we))
 
         return np.vstack(word_embeds_flat), np.array(word_offsets)

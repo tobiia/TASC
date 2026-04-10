@@ -1,88 +1,19 @@
 import numpy as np
 
-from term_extraction.models import TermEmbeddings, TermSummary
+from term_extraction.models import TermSummary
 
 
 class EmbeddingCache:
     # corp, equi, htfl, wind
-    # mean, all
-    # uni, ngram
-    def __init__(self, cache_domain, cache_context, gram):
-        self.cache_context = cache_context
-        self.path = f"cache_{cache_domain}_{cache_context}_{gram}.npz"
+    # uni, uni_vanilla, ngram, ngram_vanilla
+    def __init__(self, cache_domain, gram):
+        self.path = f"cache_{cache_domain}_{gram}.npz"
 
     def save_cache(self, term_candidates, sentence_cache, candidates):
-        if self.cache_context == "mean":
-            self._save_mean_cache(term_candidates, sentence_cache, candidates)
-        else:
-            self._save_all_cache(term_candidates, sentence_cache, candidates)
+        self._save_all_cache(term_candidates, sentence_cache, candidates)
 
     def load_cache(self):
-        if self.cache_context == "mean":
-            return self._load_mean_cache()
-        else:
-            return self._load_all_cache()
-
-    def _save_mean_cache(self, term_candidates, sentence_cache, candidates):
-
-        cand_keys = list(term_candidates.keys())
-
-        word_embeds = np.vstack([term_candidates[c].word_embed for c in cand_keys])
-
-        sent_embeds_flat, sent_offsets = self._flatten_sent_embeds(
-            term_candidates, cand_keys
-        )
-
-        cache_words, cache_offsets, cache_embeds_flat = self._flatten_sentence_cache(
-            sentence_cache
-        )
-
-        cand_dict_keys, cand_dict_values_flat, cand_dict_offsets = (
-            self._flatten_candidates(candidates)
-        )
-
-        self._save_common(
-            self.path,
-            cand_keys,
-            word_embeds=word_embeds,
-            sent_embeds_flat=sent_embeds_flat,
-            sent_offsets=sent_offsets,
-            cache_words=cache_words,
-            cache_offsets=cache_offsets,
-            cache_embeds_flat=cache_embeds_flat,
-            cand_dict_keys=cand_dict_keys,
-            cand_dict_values_flat=cand_dict_values_flat,
-            cand_dict_offsets=cand_dict_offsets,
-        )
-
-    def _load_mean_cache(self):
-
-        data = self._load_common(self.path)
-
-        term_candidates = {}
-
-        for i, cand in enumerate(data["candidates"]):
-            s_start = data["sent_offsets"][i]
-            s_end = data["sent_offsets"][i + 1]
-
-            term_candidates[cand] = TermEmbeddings(
-                word_embed=data["word_embeds"][i],
-                sent_embeds=data["sent_embeds_flat"][s_start:s_end],
-            )
-
-        sentence_cache = self._reconstruct_sentence_cache(
-            data["cache_words"],
-            data["cache_offsets"],
-            data["cache_embeds_flat"],
-        )
-
-        candidates = self._reconstruct_candidates(
-            data["cand_dict_keys"],
-            data["cand_dict_values_flat"],
-            data["cand_dict_offsets"],
-        )
-
-        return term_candidates, sentence_cache, candidates
+        return self._load_all_cache()
 
     def _save_all_cache(self, term_candidates, sentence_cache, candidates):
 

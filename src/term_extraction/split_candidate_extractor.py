@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Tuple
 import string
 import spacy
 import os
@@ -9,9 +8,7 @@ from spacy.lang.char_classes import ALPHA, ALPHA_LOWER, ALPHA_UPPER
 from spacy.lang.char_classes import CONCAT_QUOTES, LIST_ELLIPSES, LIST_ICONS
 from spacy.util import compile_infix_regex
 
-# nltk.download("punkt")
-
-from config import PROJECT_ROOT, SRC_DIR
+from config import TERM_PKG
 
 # Parts of speech templates
 pos_tag_patterns = ["PROPN", "NOUN", "ADJ", "VERB"]
@@ -380,9 +377,7 @@ class CandidateExtractor:
         self.model_nlp.max_length = 2_000_000
 
         try:
-            current_dir = PROJECT_ROOT / "src" / "term_extraction"
-            self.stop_words_path = stop_words_path
-            stop_path = current_dir / self.stop_words_path
+            stop_path = TERM_PKG / stop_words_path
             with open(stop_path, encoding="utf-8") as f:
                 self.stop_words = set(f.read().split(","))
         except FileNotFoundError:

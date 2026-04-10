@@ -1,18 +1,225 @@
+"""Combination filter evaluation for unigram terminology extraction.
+
+Precomputes all score dicts once, then grid-searches over threshold
+combinations to find the highest F1. Results are ranked and saved to CSV.
+
+Outputs:
+    combo_results.csv: all evaluated combinations, sorted by F1 desc
+"""
+
 import csv
+import itertools
 import os
-import csv
-from collections import Counter
+import numpy as np
 import pandas as pd
-
-# from english_extractor import EnglishPhraseExtractor as eee
-from term_extraction.split_candidate_extractor import CandidateExtractor
 from term_extraction.term_extractor import TermExtractor
-from config import PROJECT_ROOT, SRC_DIR
+from config import PROJECT_ROOT
 
-# python -m term_extraction.main
+# ---------------------------------------------------------------------------
+# ANCHOR - config
+
+DOMAIN = "corp"
+USE_CACHE = True
+CORPUS_PATH = (
+    PROJECT_ROOT / "corpus" / "ACTER" / "en" / DOMAIN / "annotated" / "texts_tokenised"
+)
+
+GOLD_SET_PATH = (
+    PROJECT_ROOT
+    / "corpus"
+    / "ACTER"
+    / "en"
+    / DOMAIN
+    / "annotated"
+    / "annotations"
+    / "unique_annotation_lists"
+    / f"{DOMAIN}_en_tokenised_terms.tsv"
+)
+
+# Thresholds to sweep per filter. Adjust granularity as needed.
+THRESHOLD_RANGE = np.round(np.arange(0.0, 1.05, 0.1), 2).tolist()
+
+# filters to combine -- >= 4 currently too slow
+MAX_COMBO_SIZE = 3
+
+OUTPUT_CSV = "combo_results.csv"
 
 
-def calculate_metrics(true_terms, extracted_terms):
+# ---------------------------------------------------------------------------
+
+
+def main():
+    print("********************************************* setting up tests...")
+    extractor = TermExtractor(corpus_path=str(CORPUS_PATH))
+    # REVIEW - change gold set if need
+    gold_set = load_gold_set(str(GOLD_SET_PATH), "uni")
+
+    # load all embeddings from cache
+    term_candidates, orig_candidates = extractor.embed_setup(
+        domain=DOMAIN,
+        gram_type="uni",
+        use_cache=USE_CACHE,
+        update_sent_cache=True,
+    )
+
+    # compute anisotropy baseline from randomly sampled word embeddings
+    embeds_list = []
+    for info in term_candidates.values():
+        embeds_list.append(info.word_embeds)
+    if embeds_list:
+        all_word_embeds = np.vstack(embeds_list)
+        extractor.compute_anisotropy(all_word_embeds)
+        print(
+            f"##### fine-tuned anisotropy baseline: {extractor.anisotropy_baseline:.4f}"
+        )
+
+    # creates non-fine tuned sentence embeds
+    vanilla_candidates, _ = extractor.embed_setup(
+        domain=DOMAIN,
+        gram_type="uni_vanilla",
+        use_cache=USE_CACHE,
+        model_name=extractor.vanilla_model_name,
+        candidates_dict=orig_candidates,
+        update_sent_cache=False,
+    )
+
+    # creates 1 word embeddings needed for contextualized_vs_general
+    general_embeddings = extractor._create_embeddings(list(orig_candidates.keys()))
+
+    # ----------------------------------------------------------------------
+
+    # precompute all score dicts
+    print(
+        f"******************************************** precomputing candidate scores..."
+    )
+
+    all_filters: dict[str, tuple[dict[str, float], bool]] = {}
+    # struct: { filter_name: (scores_dict, keep_above) }
+    # keep_above=True -> keep terms with score >= threshold
+    # keep_above=False -> keep terms with score <= threshold
+
+    # self_similarity: keep >= threshold
+    print("--- self_similarity")
+    all_filters["self_similarity"] = (
+        extractor.self_similarity(term_candidates),
+        True,
+    )
+
+    # variance: keep <= threshold
+    print("--- variance")
+    all_filters["variance"] = (
+        extractor.variance(term_candidates),
+        False,
+    )
+
+    # contextualized_vs_general: keep <= threshold
+    if general_embeddings is not None:
+        print("--- contextualized_vs_general")
+        all_filters["contextualized_vs_general"] = (
+            extractor.contextualized_vs_general(term_candidates, general_embeddings),
+            False,
+        )
+
+    if vanilla_candidates is not None:
+        # self_similarity_change: keep >= threshold
+        print("--- self_similarity_change")
+        all_filters["self_similarity_change"] = (
+            extractor.self_similarity_change(term_candidates, vanilla_candidates),
+            True,
+        )
+
+        # domain_vs_general: keep <= threshold
+        print("--- domain_vs_general")
+        all_filters["domain_vs_general"] = (
+            extractor.domain_vs_general(term_candidates, vanilla_candidates),
+            False,
+        )
+
+    # establishing the baseline
+    print("********************************************* dataset statistics...")
+    full_candidate_set = set(term_candidates.keys())
+    print(f"\ntotal candidates: {len(full_candidate_set)}")
+    print(f"gold set size:    {len(gold_set)}")
+
+    base_p, base_r, base_f1 = precision_recall_f1(full_candidate_set, gold_set)
+    print(f"baseline (no filter): P={base_p}, R={base_r}, F1={base_f1}\n")
+
+    # ------------------------------------------------------------------
+    # grid search over filter combinations + thresholds
+
+    print("********************************************* running grid search...")
+    filter_names = list(all_filters.keys())
+    results = []
+
+    for combo_size in range(1, MAX_COMBO_SIZE + 1):
+        for filter_combo in itertools.combinations(filter_names, combo_size):
+            # build all threshold combos for this filter combination
+            threshold_grid = itertools.product(*[THRESHOLD_RANGE for _ in filter_combo])
+            for thresholds in threshold_grid:
+                # intersect: a term must pass ALL filters
+                passing = full_candidate_set.copy()
+                for fname, threshold in zip(filter_combo, thresholds):
+                    scores, keep_above = all_filters[fname]
+                    passing &= apply_threshold(scores, threshold, keep_above)
+
+                if not passing:
+                    continue
+
+                p, r, f1 = precision_recall_f1(passing, gold_set)
+
+                # gonna save dict to file
+                results.append(
+                    {
+                        "filters": " & ".join(
+                            f"{n}>={t}" if all_filters[n][1] else f"{n}<={t}"
+                            for n, t in zip(filter_combo, thresholds)
+                        ),
+                        "n_filters": combo_size,
+                        "n_predicted": len(passing),
+                        "precision": p,
+                        "recall": r,
+                        "f1": f1,
+                    }
+                )
+
+    # ------------------------------------------------------------------
+    # saving to file
+
+    results.sort(key=lambda x: x["f1"], reverse=True)
+
+    print(f"\n=== Top 10 combinations by F1 ===")
+    for r in results[:10]:
+        print(
+            f"F1={r['f1']:.4f}  P={r['precision']:.4f}  R={r['recall']:.4f}"
+            f"  n={r['n_predicted']}  | {r['filters']}"
+        )
+
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "filters",
+                "n_filters",
+                "n_predicted",
+                "precision",
+                "recall",
+                "f1",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(results)
+
+    print(f"{len(results)} combinations ran; saved to {OUTPUT_CSV}")
+
+
+if __name__ == "__main__":
+    main()
+
+# ---------------------------------------------------------------------------
+# ANCHOR - helpers
+
+
+def calculate_metrics(true_terms, extracted_terms, print_results=False):
     true_positives = len(true_terms.intersection(extracted_terms))
     false_positives = len(extracted_terms.difference(true_terms))
     false_negatives = len(true_terms.difference(extracted_terms))
@@ -33,304 +240,20 @@ def calculate_metrics(true_terms, extracted_terms):
         else 0
     )
 
-    print("Precision:", precision)
-    print("Recall:", recall)
-    print("F1 Score:", f1_score)
+    if print_results:
+        print("Precision:", precision)
+        print("Recall:", recall)
+        print("F1 Score:", f1_score)
 
     return precision, recall, f1_score
 
 
-def compare_sets(true_terms, extracted_terms, print_results=False):
+def compare_sets(true_terms, extracted_terms):
     true_positives = true_terms.intersection(extracted_terms)
     false_positives = extracted_terms.difference(true_terms)
     false_negatives = true_terms.difference(extracted_terms)
 
-    if print_results:
-        # print("True Positives:", true_positives)
-        # print("False Positives:", false_positives)
-        print("False Negatives:", false_negatives)
-
     return true_positives, false_positives, false_negatives
-
-
-# specifically for the ACTER dataset
-def uni_candidates(domain):
-
-    path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "texts_tokenised"
-    )
-
-    ann_path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "annotations"
-        / "unique_annotation_lists"
-        / domain
-        + "_en_terms.tsv"
-    )
-
-    df = pd.read_table(ann_path, sep="\t", header=None, names=["term", "label"])
-    true_terms = df["term"].to_list()
-    specific_terms = df.loc[df["label"] == "Specific_Term", "term"].to_list()
-    common_terms = df.loc[df["label"] == "Common_Term", "term"].to_list()
-    ood_terms = df.loc[df["label"] == "OOD_Term", "term"].to_list()
-    named_entities = df.loc[df["label"] == "Named_Entity", "term"].to_list()
-
-    true_terms_all = set(
-        [w.lower().replace("  ", " ").replace("- ", "-") for w in true_terms]
-    )
-    true_terms_mwe = set(
-        [w for w in true_terms_all if (len(w.split(" ")) > 1)]
-        + [w for w in true_terms_all if len(w.split("-")) > 1]
-    )  # True Phrase Terms
-    true_terms_uni = set(
-        [w for w in true_terms_all if w not in true_terms_mwe]
-    )  # True Unigrams Terms
-
-    print("********************************************* dataset statistics...")
-    print("#### True terms all: ", len(true_terms_all))
-    print("####True terms uni: ", len(true_terms_uni))
-
-    G = set(true_terms)
-    G_uni = set(true_terms_uni)
-    S = set(specific_terms)
-    C = set(common_terms)
-    D = set(ood_terms)
-    N = set(named_entities)
-    G = G - D - N
-    G_uni = G_uni - D - N
-
-    print(
-        "********************************************* unigram candidates extracted..."
-    )
-    base_extractor = CandidateExtractor(path, cohesion_filter=True)
-    unigrams_dict = base_extractor.unigram_candidates()
-    print(f"#### total number of candidates extracted: {len(unigrams_dict)}")
-    E = set(unigrams_dict)
-    precision, recall, f1_score = calculate_metrics(G_uni, E)
-    print("********************************************* stats for specific terms")
-    precision, recall, f1_score = calculate_metrics(G_uni - C, E - C)
-    print("********************************************* stats for common terms")
-    precision, recall, f1_score = calculate_metrics(G_uni - S, E - S)
-
-
-# specifically for the ACTER dataset
-def mwe_candidates(domain):
-
-    path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "texts_tokenised"
-    )
-
-    ann_path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "annotations"
-        / "unique_annotation_lists"
-        / domain
-        + "_en_terms.tsv"
-    )
-
-    df = pd.read_table(ann_path, sep="\t", header=None, names=["term", "label"])
-    true_terms = df["term"].to_list()
-    specific_terms = df.loc[df["label"] == "Specific_Term", "term"].to_list()
-    common_terms = df.loc[df["label"] == "Common_Term", "term"].to_list()
-    ood_terms = df.loc[df["label"] == "OOD_Term", "term"].to_list()
-    named_entities = df.loc[df["label"] == "Named_Entity", "term"].to_list()
-
-    true_terms_all = set(
-        [w.lower().replace("  ", " ").replace("- ", "-") for w in true_terms]
-    )
-    true_terms_mwe = set(
-        [w for w in true_terms_all if (len(w.split(" ")) > 1)]
-        + [w for w in true_terms_all if len(w.split("-")) > 1]
-    )  # True Phrase Terms
-    true_terms_uni = set(
-        [w for w in true_terms_all if w not in true_terms_mwe]
-    )  # True Unigrams Terms
-
-    print("********************************************* dataset statistics...")
-    print("#### True terms all: ", len(true_terms_all))
-    print("####True terms mwe: ", len(true_terms_mwe))
-
-    lengths = Counter(len(t.split()) for t in true_terms_mwe)
-    print(f"#### lengths of mwe true terms: {lengths}")
-    print()
-
-    G = set(true_terms)
-    G_mwe = set(true_terms_mwe)
-    S = set(specific_terms)
-    C = set(common_terms)
-    D = set(ood_terms)
-    N = set(named_entities)
-    G = G - D - N
-    G_mwe = G_mwe - D - N
-
-    print(
-        "********************************************* ngram candidates with filter OFF..."
-    )
-    base_extractor = CandidateExtractor(path, cohesion_filter=False)
-    ngrams_dict = (
-        base_extractor.unigram_candidates()
-    )  # FIXME - change func call to ngrams!
-    print(f"#### total number of candidates extracted: {len(ngrams_dict)}")
-    E = set(ngrams_dict)
-    precision, recall, f1_score = calculate_metrics(G_mwe, E)
-    print("********************************************* stats for specific terms")
-    precision, recall, f1_score = calculate_metrics(G_mwe - C, E - C)
-    print("********************************************* stats for common terms")
-    precision, recall, f1_score = calculate_metrics(G_mwe - S, E - S)
-
-    # MWE LENGTHS
-    lengths = Counter(len(c.split()) for c in ngrams_dict.keys())
-    print(f"#### lengths of mwe candidates: {lengths}")
-    print()
-
-    print("***************** candidates with filter ON...")
-    base_extractor = CandidateExtractor(path, cohesion_filter=True)
-    ngrams_dict = (
-        base_extractor.unigram_candidates()
-    )  # FIXME - change func call to ngrams!
-    print(f"#### total number of candidates extracted: {len(ngrams_dict)}")
-    E = set(ngrams_dict)
-    precision, recall, f1_score = calculate_metrics(G_mwe, E)
-    print("********************************************* stats for specific terms")
-    precision, recall, f1_score = calculate_metrics(G_mwe - C, E - C)
-    print("********************************************* stats for common terms")
-    precision, recall, f1_score = calculate_metrics(G_mwe - S, E - S)
-
-    lengths = Counter(len(c.split()) for c in ngrams_dict.keys())
-    print(f"#### lengths of mwe candidates: {lengths}")
-    print()
-
-    true_positives, false_positives, false_negatives = compare_sets(
-        G, E, print_results=False
-    )
-
-    save_set_to_csv(true_positives, "true_positives.csv")
-    save_set_to_csv(false_positives, "false_positives.csv")
-    save_set_to_csv(false_negatives, "false_negatives.csv")
-
-
-# "run" in proj_root
-# python -m term_extraction.main
-def main(domain, contextualized):  # mean or all
-
-    path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "texts_tokenised"
-    )
-
-    ann_path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "annotations"
-        / "unique_annotation_lists"
-        / domain
-        + "_en_terms.tsv"
-    )
-
-    df = pd.read_table(ann_path, sep="\t", header=None, names=["term", "label"])
-    true_terms = df["term"].to_list()
-    specific_terms = df.loc[df["label"] == "Specific_Term", "term"].to_list()
-    common_terms = df.loc[df["label"] == "Common_Term", "term"].to_list()
-    ood_terms = df.loc[df["label"] == "OOD_Term", "term"].to_list()
-    named_entities = df.loc[df["label"] == "Named_Entity", "term"].to_list()
-
-    true_terms_all = set(
-        [w.lower().replace("  ", " ").replace("- ", "-") for w in true_terms]
-    )
-    true_terms_mwe = set(
-        [w for w in true_terms_all if (len(w.split(" ")) > 1)]
-        + [w for w in true_terms_all if len(w.split("-")) > 1]
-    )  # True Phrase Terms
-    true_terms_uni = set(
-        [w for w in true_terms_all if w not in true_terms_mwe]
-    )  # True Unigrams Terms
-
-    print("********************************************* dataset statistics...")
-    print("####True terms uni: ", len(true_terms_uni))
-
-    G = set(true_terms)
-    G_uni = set(true_terms_uni)
-    S = set(specific_terms)
-    C = set(common_terms)
-    D = set(ood_terms)
-    N = set(named_entities)
-    G = G - D - N
-    G_uni = G_uni - D - N
-
-    # cache_path = f"cache_{contextualized}_{domain}_uni.npz"
-
-    term_extractor = TermExtractor(
-        path,
-        model_name="local_mpnet_ft",
-        vanilla_model_name="local_mpnet_base",
-        topic_threshold=0.4,
-        context_diff_threshold=0.3,
-        self_sim_threshold=0.6,
-        ssc_threshold=0,
-    )
-
-    # REVIEW - change thresholds here
-    thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    results_file = f"metrics_{domain}_{contextualized}_uni.csv"
-
-    for threshold, extracted_uni in zip(
-        thresholds,
-        term_extractor.uni_test_filter(
-            term_extractor.self_similarity,
-            thresholds=thresholds,
-            domain=domain,
-            contextualized_mode=contextualized,
-            gram_type="uni",
-            use_cache=True,
-            compute_ssc=False,
-            compute_stop=False,
-        ),
-    ):
-        print(f"#### total number of candidates extracted: {len(extracted_uni)}")
-        E = set(extracted_uni)
-
-        print("********************************************* overall")
-        p, r, f1 = calculate_metrics(G_uni, E)
-        append_metrics(results_file, threshold, "overall", p, r, f1)
-
-        print("********************************************* stats for specific terms")
-        p, r, f1 = calculate_metrics(G_uni - C, E - C)
-        append_metrics(results_file, threshold, "specific", p, r, f1)
-
-        print("********************************************* stats for common terms")
-        p, r, f1 = calculate_metrics(G_uni - S, E - S)
-        append_metrics(results_file, threshold, "common", p, r, f1)
 
 
 def save_set_to_csv(data_set, file_path):
@@ -358,43 +281,52 @@ def append_metrics(file_path, threshold, label, precision, recall, f1_score):
         )
 
 
-def uni_extraction(domain, contextualized):  # mean or all
+def load_gold_set(path, wanted_set):
 
-    path = (
-        PROJECT_ROOT
-        / "corpus"
-        / "ACTER"
-        / "en"
-        / domain
-        / "annotated"
-        / "texts_tokenised"
+    df = pd.read_table(path, sep="\t", header=None, names=["term", "label"])
+
+    true_terms = set(
+        w.lower().replace("  ", " ").replace("- ", "-") for w in df["term"].tolist()
     )
 
-    # cache_path = f"cache_{contextualized}_{domain}.npz"
+    ood = set(df.loc[df["label"] == "OOD_Term", "term"].str.lower())
+    ne = set(df.loc[df["label"] == "Named_Entity", "term"].str.lower())
+    """ specific_terms = df.loc[df["label"] == "Specific_Term", "term"].to_list()
+    common_terms = df.loc[df["label"] == "Common_Term", "term"].to_list() """
 
-    term_extractor = TermExtractor(
-        path,
-        topic_threshold=0.4,
-        context_diff_threshold=0.3,
-        self_sim_threshold=0.6,
-        ssc_threshold=0,
+    if wanted_set == "all":
+        return true_terms - ood - ne
+
+    true_terms_mwe = set(
+        [w for w in true_terms if len(w.split(" ")) > 1]
+        + [w for w in true_terms if len(w.split("-")) > 1]
     )
+    if wanted_set == "n":
+        return true_terms_mwe - ood - ne
 
-    # REVIEW - change thresholds here
-    thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    if wanted_set == "uni":
+        true_terms_uni = set(w for w in true_terms if w not in true_terms_mwe)
+        return true_terms_uni - ood - ne
 
-    for extracted_uni in term_extractor.uni_test_filter(
-        term_extractor.self_similarity,
-        thresholds=thresholds,
-        domain=domain,
-        contextualized_mode=contextualized,
-        gram_type="uni",
-        use_cache=True,
-        compute_ssc=False,
-        compute_stop=False,
-    ):
-        pass
+    return true_terms - ood - ne
 
 
-# uni_candidates("corp")
-# uni_evaluation("corp", "all")
+def precision_recall_f1(predicted, gold):
+    if not predicted:
+        return 0.0, 0.0, 0.0
+    tp = len(predicted & gold)
+    precision = tp / len(predicted)
+    recall = tp / len(gold) if gold else 0.0
+    f1 = (
+        (2 * precision * recall / (precision + recall))
+        if (precision + recall) > 0
+        else 0.0
+    )
+    return round(precision, 4), round(recall, 4), round(f1, 4)
+
+
+def apply_threshold(scores, threshold, keep_above):
+    if keep_above:
+        return {w for w, s in scores.items() if s >= threshold}
+    else:
+        return {w for w, s in scores.items() if s <= threshold}

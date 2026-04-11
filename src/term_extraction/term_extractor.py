@@ -73,12 +73,16 @@ class TermExtractor:
         special_tokens.update(self.tokenizer.added_tokens_encoder.keys())
         self.special_tokens = list(special_tokens)
 
+        # REVIEW there is a return_offsets_mapping on HG tokenizers
+        # can use to make word embed creation model-agnostic but it'll require
+        # rewriting
+
         # maps sentence index (int) to token ids as text and token embeddings
         # can reconstruct sentences using dict[int][0]
         self.sentence_cache: dict[int, tuple[list[str], np.ndarray]] = {}
         self.error_terms = set()  # set that collects any terms dropped b/c of errors
 
-    def get_unigram_cands(self) -> dict[str, list[str]]:
+    def get_candidates(self, gram_type) -> dict[str, list[str]]:
         """Extracts candidate terms from the corpus.
 
         Retrieves candidate terms from the corpus using CandidateExtractor.
@@ -89,12 +93,18 @@ class TermExtractor:
             {"corporation": ["I hate corporations", "I love corporations"]}
         """
         candidate_extractor = CandidateExtractor(
-            path=self.corpus_path,
+            corpus_path=self.corpus_path,
             stop_words_path=self.stop_words_path,
-            cohesion_filter=False,
         )
 
-        return candidate_extractor.unigram_candidates()
+        if "uni" in gram_type:
+            return candidate_extractor.unigram_candidates()
+        elif "ngram" in gram_type:
+            return candidate_extractor.ngram_candidates()
+        else:
+            uni_candidates = candidate_extractor.unigram_candidates()
+            n_candidates = candidate_extractor.ngram_candidates()
+            return uni_candidates | n_candidates
 
     def _l2_normalize(self, x):
         return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
@@ -142,7 +152,7 @@ class TermExtractor:
         texts: list[str],
         tokenizer=None,
         model=None,
-        sentence_cache: bool = False,
+        update_sentence_cache: bool = False,
         sentence_to_idx: dict[str, int] | None = None,
     ) -> np.ndarray:
         """Creates mean-pooled sentence embeddings.
@@ -193,7 +203,7 @@ class TermExtractor:
 
             # reconstruct word embeddings from token embeddings and store
             # integer indices (via sentence_to_idx) are the keys to the cache
-            if sentence_cache and sentence_to_idx is not None:
+            if update_sentence_cache and sentence_to_idx is not None:
                 batch_tok_embeds = model_output.last_hidden_state.cpu().numpy()
                 for i, sent in enumerate(batch):
                     tokens = tokenizer.convert_ids_to_tokens(
@@ -217,7 +227,7 @@ class TermExtractor:
         self,
         candidates: dict[str, list[str]],
         model_name: str | None = None,
-        sentence_cache: bool = False,
+        update_sentence_cache: bool = False,
     ) -> dict[str, CandidateSummary]:
         """Encodes all candidate term occurrences and sentences
 
@@ -247,7 +257,7 @@ class TermExtractor:
             unique_sentences,
             tokenizer=tokenizer,
             model=model,
-            sentence_cache=sentence_cache,
+            update_sentence_cache=update_sentence_cache,
             sentence_to_idx=sentence_to_idx,
         )
 
@@ -619,7 +629,9 @@ class TermExtractor:
                 sim = sample @ sample.T
                 n = sim.shape[0]
                 vanilla_anisotropy = float((sim.sum() - np.trace(sim)) / (n * (n - 1)))
-                print(f"##### vanilla anisotropy baseline: {vanilla_anisotropy:.4f}")
+                print(
+                    f"TERM EXTRACTOR: vanilla anisotropy baseline: {vanilla_anisotropy:.4f}"
+                )
 
         ssf = self.self_similarity(
             shared_fine_tuned,
@@ -857,8 +869,8 @@ class TermExtractor:
 
     def embed_setup(
         self,
-        domain="corp",
-        gram_type="uni",  # "uni" or "n"
+        domain: str,
+        gram_type: str,  # "uni" or "ngram"
         use_cache=True,
         model_name: str | None = None,
         candidates_dict: dict | None = None,
@@ -868,35 +880,42 @@ class TermExtractor:
             f"******************************************** setting up {gram_type} embedding data..."
         )
         # ex. cache_path="cache_corp_uni.npz",
-        cache = EmbeddingCache(cache_domain=domain, gram=gram_type)
+        cache = EmbeddingCache(cache_domain=domain, gram_type=gram_type)
 
         if use_cache and os.path.exists(cache.path):
             print("******************************************** loading from cache...")
             term_candidates, sentence_cache, orig_candidates = cache.load_cache()
             if update_sent_cache:
                 self.sentence_cache = sentence_cache
-            print(f"##### number of candidates: {len(orig_candidates)}")
+            print(f"TERM EXTRACTOR: number of candidates: {len(orig_candidates)}")
             print(
-                f"##### number of candidates after word embeddings: {len(term_candidates)}"
+                f"TERM EXTRACTOR: number of candidates after word embeddings: {len(term_candidates)}"
             )
         else:
             print("ERROR: no cache found! getting data...")
             if not candidates_dict:
-                orig_candidates = self.get_unigram_cands()
+                orig_candidates = self.get_candidates(gram_type)
             else:
                 orig_candidates = candidates_dict
+                print(f"TERM EXTRACTOR: recieved candidates")
 
             if not orig_candidates:
                 raise ValueError("ERROR: error with candidate extraction.")
 
-            print(f"##### number candidates: {len(orig_candidates)}")
+            print(f"TERM EXTRACTOR: number candidates: {len(orig_candidates)}")
 
             # _encode will update self.sentence_cache if true
             encoded = self._encode(orig_candidates, model_name, update_sent_cache)
-            print(f"##### number after encoding: {len(encoded)}")
+            print(
+                f"TERM EXTRACTOR: number of candidates after encoding: {len(encoded)}"
+            )
 
             term_candidates = self._create_word_embeddings(encoded)
-            print(f"##### number after word embeddings: {len(term_candidates)}")
+            print(
+                f"TERM EXTRACTOR: number of candidates after word embeddings: {len(term_candidates)}"
+            )
+
+            save_set_to_csv(self.error_terms, "error_terms.csv")
 
             print("******************************************** caching...")
             if use_cache:

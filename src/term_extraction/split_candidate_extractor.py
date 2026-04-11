@@ -1,5 +1,7 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
+import math
 import string
+import re
 import spacy
 import os
 import pandas as pd
@@ -8,10 +10,30 @@ from spacy.lang.char_classes import ALPHA, ALPHA_LOWER, ALPHA_UPPER
 from spacy.lang.char_classes import CONCAT_QUOTES, LIST_ELLIPSES, LIST_ICONS
 from spacy.util import compile_infix_regex
 
+# from spacy.tokens import Doc, Token
+
 from config import TERM_PKG
 
 # Parts of speech templates
-pos_tag_patterns = ["PROPN", "NOUN", "ADJ", "VERB"]
+pos_tag_patterns = [
+    "PROPN",
+    "NOUN",
+    "ADJ",
+    "VERB",
+    "ADV",
+    [["PROPN", "NOUN"], "*"],
+    ["ADJ", "*", ["PROPN", "NOUN"], "*"],
+    ["ADJ", "*"],
+    ["VERB", "ADJ", ["PROPN", "NOUN"], "*"],
+    [["PROPN", "NOUN"], "*", "ADJ", "*", ["PROPN", "NOUN"], "*"],
+    ["ADJ", "VERB", ["PROPN", "NOUN"], "*"],
+    ["VERB", "*", ["PROPN", "NOUN"], "*"],
+    ["ADV", "*", "ADJ", "*"],
+    [["PROPN", "NOUN"], "ADP", ["PROPN", "NOUN"]],
+    [["ADJ", "PROPN", "NOUN"], "*", "PART", ["PROPN", "NOUN"], "*"],
+    [["VERB", "ADV", "X"]],
+    [["ADJ", "PROPN", "NOUN"], "*", "ADP", ["PROPN", "NOUN"], "*"],
+]
 
 # Setting up punctuation lists to check, punc_without does not contain hyphens and apostrophes as they can be part of phrases. punc_all is needed to check if there is a hyphen at the beginning or end of a phrase
 punc_without = set(string.punctuation)
@@ -20,20 +42,31 @@ punc_all = punc_without.copy()
 punc_without.remove("-")
 punc_without.remove("'")
 num_set = set("1234567890")
+CLAUSE_BREAKS = {",", ";", ":", "(", ")", "[", "]", "—", "–", "-", "/"}
+NOISE_TOKENS = set(string.punctuation).union(("''", "``", "..."))
+
+
+def remove_punc_spaces(text):
+    """Remove spaces before punctuation and around apostrophes."""
+    # Remove spaces before common punctuation marks
+    text = re.sub(r"\s+([.,;:!?)\]}–—])", r"\1", text)
+    # Remove spaces around apostrophes
+    text = re.sub(r"\s+[''´`]\s*", "'", text)
+    return text
 
 
 # Text tokenizer, input text with original case NOT in lower case
 # output a set of tokens marked by sentences, an element in the list is a sentence that contains tokens with information about them
-#  [ [("token1", pos, index),("token2", pos, index),("token3", pos, index)],
-#    [("token1", pos, index),("token2", pos, index),("token3", pos, index)]]
+#  [ [(token1, pos, index),(token2, pos, index),(token3, pos, index)],
+#    [(token1, pos, index),(token2, pos, index),(token3, pos, index)]]
 def tokinizer(doc):
     sent_tokens = []
     index = 0
     for sent in doc.sents:
         list_tok = []
-        for i in sent:
+        for i in sent:  # i = Token
             list_tok.append(
-                (i.text.lower(), i.pos_, index)
+                (i, i.pos_, index)
             )  # creating a list of tokens with content, the actual unigram in lower case, its part of speech, position number in the text
             index += 1
         sent_tokens.append(list_tok)
@@ -41,25 +74,31 @@ def tokinizer(doc):
 
 
 # function for combining phrase tokens into a single string
-# input is a list of words ["word1","word2", "word3"]
+# input is a list of spacy Tokens [token1, token2, token3] OR list of str
 # output is "word1 word2 word3"
 # no space is put between the hyphen and the apostrophe
 def concatenate_ngrams(candidate):
-    cand_temp = []
     temp = ""
     if type(candidate) != type(str()):
-        for w in candidate:
+        for w in candidate:  # w = Token
+            if isinstance(w, str):
+                w_text = w
+            else:
+                w_text = w.lower_
             if (
-                (w not in punc_without)
+                (w_text not in punc_without)
                 and (len(temp) > 0)
                 and (
                     (temp[-1] == "'")
-                    or ((w[0] not in punc_without) and (temp[-1] not in punc_without))
+                    or (
+                        (w_text[0] not in punc_without)
+                        and (temp[-1] not in punc_without)
+                    )
                 )
             ):
-                temp = temp + " " + str(w)
+                temp = temp + " " + w_text
             else:
-                temp = temp + str(w)
+                temp = temp + w_text
     else:
         temp = candidate
     temp = temp.lower()
@@ -69,58 +108,37 @@ def concatenate_ngrams(candidate):
 ngram_cache = {}
 
 
-# REVIEW helps?
+# input: Sequence of either spacy Tokens or strings representing a mwe
 def concat_cache(ngram):
-    key = tuple(ngram)
+    first = ngram[0]
+    if isinstance(first, str):
+        key = tuple(token.lower() for token in ngram)
+    else:
+        key = tuple(Token.lower_ for Token in ngram)  # spaCy Token
     if key not in ngram_cache:
         ngram_cache[key] = concatenate_ngrams(ngram)
     return ngram_cache[key]
 
 
-# filter based on changing part of speech
-# input list of candidates
-# output filtered list
-# if during repeated marking of phrases that end in NOUN or PROPN the part of speech changed to something other than "NOUN", "PROPN", "VERB", then such phrase is not complete, and it is deleted
-# when marking Spacy even a hyphen can be PROPN or NOUN if it is part of a whole word, for example IT-developers
-def filter_propn_noun(mwe_list, nlp):
-    filtred_ngrams = []
-    for i in mwe_list:
-        checker2 = True
-        if concat_cache(i[0])[-1] in punc_all and concat_cache(i[0])[0] in punc_all:
-            checker2 = False
-
-        if len(i[2]) > 1:
-            if (
-                ("NOUN" in i[1][-1])
-                or ("PROPN" in i[1][-1])
-                or ("NOUN" in i[1][-2])
-                or ("PROPN" in i[1][-2])
-            ) and (("ADJ" not in i[1][-1]) and ("ADJ" not in i[1][-2])):
-                temp_seq = str(concat_cache(i[0]))
-                temp_token = nlp(temp_seq)
-                if (temp_token[-1]).pos_ not in ["NOUN", "PROPN", "VERB"]:
-                    checker2 = False
-
-        if checker2 == True:
-            filtred_ngrams.append(i)
-    return filtred_ngrams
-
-
-# Cleaning phrases from stop words,
-# if a word in a phrase is a stop word, the phrase is deleted. all words in the phrase are checked except prepositions and PROPN
-# at the input is a list of phrases and a list of stop words
+# Cleaning a Single phrase from stop words
+# if the phrase starts or ends with an adposition, phrase is deleted.
+# if a word in a phrase is a stop word, the phrase is deleted.
+# all words in the phrase are checked except prepositions and PROPN
+# at the input:
+# mwe_list = [    [[list of words/Tokens in the phrase], template by which the candidate was extracted, sequence of parts of speech of the candidate, indexes of word positions, number of words, number of characters in the candidate], [6 elems], [6], ...,    ]
+# a list of lists for each phrase coming from a sentence
 # at the output is a filtered list
 def filter_stop_words(mwe_list, stop_words):
     filtred_ngrams = []
     for mwe in mwe_list:
         checker3 = True
-        temp = mwe
+        # if first or last term is adposition
         if mwe[2][0] == "ADP" or mwe[2][-1] == "ADP":
             checker3 = False
 
-        for i, w in enumerate(mwe[0]):
-            if mwe[2][i] not in ["PROPN", "ADP"]:
-                if w in stop_words:
+        for w in mwe[0]:  # iterating over each Token in the phrase
+            if w.pos_ not in ["PROPN", "ADP"]:
+                if w.lower_ in stop_words:
                     checker3 = False
 
         if checker3 == True:
@@ -129,21 +147,24 @@ def filter_stop_words(mwe_list, stop_words):
 
 
 # extracting candidates based on part-of-speech templates
-# input: list of tokens in one sentence [("token1", pos, index),("token2", pos, index),("token3", pos, index)] and part-of-speech template
-# output: list of extracted candidates with information about them:
-# [[list of words in the phrase], template by which the candidate was extracted, sequence of parts of speech of the candidate, indexes of word positions, number of words, number of characters in the candidate]
-def filter_ngrams_by_pos_tag(sentence, sequense):
+# input: list of tokens in one sentence [(token1, pos, index),(token2, pos, index),(token3, pos, index)] and part-of-speech template
+# output: list of lists of extracted candidates + information about them:
+# [    [[list of words/Tokens in the phrase], template by which the candidate was extracted, sequence of parts of speech of the candidate, indexes of word positions, number of words, number of characters in the candidate], [6 elems], [6], ...,    ]
+def filter_ngrams_by_pos_tag(sentence, pos_sequences):
     filtered_ngrams = []
     seen = set()
-    for seq in sequense:
+    for seq in pos_sequences:
+        # i = tuple representing 1 Token (word) in the sentence
         for i in range(len(sentence)):
-            temp = []
+            temp = []  # list of Tokens
             temp_index = []
             temp_pos = []
             checker = True
 
+            # sentence[i] = (token1, pos, index), a tuple
+            # sentence[i][0].lower_ = Token.text.lower()
             if ((sentence[i][1] in seq[0]) or (sentence[i][1] == seq[0])) and (
-                sentence[i][0] not in punc_without
+                sentence[i][0].lower_ not in punc_without
             ):
                 seq_index = 0
                 sent_index = 0
@@ -154,7 +175,7 @@ def filter_ngrams_by_pos_tag(sentence, sequense):
                     and checker == True
                 ):
                     if (sentence[i + sent_index][1] in seq[seq_index]) or (
-                        sentence[i + sent_index][0] in seq[seq_index]
+                        sentence[i + sent_index][0].lower_ in seq[seq_index]
                     ):
                         temp.append(sentence[i + sent_index][0])
                         temp_pos.append(sentence[i + sent_index][1])
@@ -172,20 +193,25 @@ def filter_ngrams_by_pos_tag(sentence, sequense):
                             sent_index += 1
 
                         elif seq_index == len(seq) - 1:
-                            if (len(temp) > 1 or "-" in "".join(temp)) and (
-                                len(set("".join(temp)).intersection(punc_without)) == 0
+                            temp_text = [t.lower_ for t in temp]
+                            if (len(temp) > 1 or "-" in "".join(temp_text)) and (
+                                len(set("".join(temp_text)).intersection(punc_without))
+                                == 0
                             ):
                                 temp_2 = temp.copy()
                                 temp_pos2 = temp_pos.copy()
                                 temp_index2 = temp_index.copy()
                                 _key = (
-                                    tuple(w.lower() for w in temp_2),
+                                    tuple(w.lower_ for w in temp_2),
                                     str(seq),
                                     tuple(temp_index2),
                                 )
-                                if _key not in seen and temp[-1] not in punc_without:
+                                if (
+                                    _key not in seen
+                                    and temp_text[-1] not in punc_without
+                                ):
                                     seen.add(_key)
-                                    temp_2 = [word.lower() for word in temp_2]
+                                    temp_2 = [word for word in temp_2]
                                     filtered_ngrams.append(
                                         [
                                             temp_2,
@@ -211,15 +237,16 @@ def filter_ngrams_by_pos_tag(sentence, sequense):
                     else:
                         checker = False
 
+                temp_text = [t.lower_ for t in temp]
                 if (
                     seq_index == len(seq)
-                    and (len(temp) > 1 or "-" in "".join(temp))
-                    and len(set("".join(temp)).intersection(punc_without)) == 0
+                    and (len(temp) > 1 or "-" in "".join(temp_text))
+                    and len(set("".join(temp_text)).intersection(punc_without)) == 0
                 ):
-                    _key = (tuple(w.lower() for w in temp), str(seq), tuple(temp_index))
-                    if _key not in seen and temp[-1] not in punc_without:
+                    _key = (tuple(w.lower_ for w in temp), str(seq), tuple(temp_index))
+                    if _key not in seen and temp_text[-1] not in punc_without:
                         seen.add(_key)
-                        temp = [word.lower() for word in temp]
+                        temp = [word for word in temp]
                         filtered_ngrams.append(
                             [
                                 temp,
@@ -267,30 +294,33 @@ def _build_phrase_positions(token_list, possible_mwe):
     return phrase_positions
 
 
+# input: list of tuples, dict of tuples and their indices in sentences
 def _compute_rectified_frequencies(possible_mwe, phrase_positions):
     """
     Compute raw and rectified frequencies for each phrase.
+    Uses fast token position matching with old-style substring blocking.
     possible_mwe must be sorted longest-first.
     Returns list of [phrase_tuple, f_raw, f_req] in the same order.
     """
-    phrase_pos_sets = {pt: set(pos) for pt, pos in phrase_positions.items()}
-    blocked = defaultdict(set)
-
     result = []
-    for phrase_tuple in possible_mwe:
-        n = len(phrase_tuple)
-        positions = phrase_pos_sets.get(phrase_tuple, set())
-        f_raw = len(positions)
-        f_req = sum(1 for s in positions if s not in blocked[phrase_tuple])
-        result.append([phrase_tuple, f_raw, f_req])
 
-        # Block sub-span start positions for all shorter sub-phrases covered by this phrase
-        for start in positions:
-            for sub_len in range(1, n):
-                for offset in range(n - sub_len + 1):
-                    sub_tuple = phrase_tuple[offset : offset + sub_len]
-                    if sub_tuple in phrase_pos_sets:
-                        blocked[sub_tuple].add(start + offset)
+    for phrase_tuple in possible_mwe:
+        positions = phrase_positions.get(phrase_tuple, [])
+        f_raw = len(positions)
+        f_req = f_raw
+
+        # Old logic: subtract occurrences that appear within longer phrases
+        phrase_str = " ".join(phrase_tuple)
+
+        for longer_phrase_tuple in result:
+            longer_str = " ".join(longer_phrase_tuple[0])
+            # If this phrase is a substring of a longer phrase (and not identical)
+            if phrase_str in longer_str and phrase_str != longer_str:
+                # Reduce count by occurrences within the longer phrase
+                longer_positions = phrase_positions.get(longer_phrase_tuple[0], [])
+                f_req -= len(longer_positions)
+
+        result.append([phrase_tuple, f_raw, max(0, f_req)])
 
     return result
 
@@ -345,26 +375,70 @@ def group_items(lst):
     return lst
 
 
+def rejoin_hyphen_apostrophe(tokens):
+    if not tokens:
+        return tokens
+
+    result = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+
+        # Case 1: next token starts with apostrophe → contraction
+        # e.g. ["do", "n't"] or ["it", "'s"] or ["i", "'m"]
+        if (
+            i + 1 < len(tokens)
+            and tokens[i + 1].startswith("'")
+            and tokens[i + 1] not in {"'", "''"}  # lone quote is not a contraction
+        ):
+            result.append(tok + tokens[i + 1])
+            i += 2
+            continue
+
+        # Case 2: current token is a bare hyphen between two word tokens
+        # e.g. ["anti", "-", "corruption"]
+        # We merge only if the hyphen is surrounded by non-punctuation tokens
+        # (i.e. it's a tokenization artifact, not a clause-break dash)
+        if (
+            tok == "-"
+            and result  # there is a preceding token already merged
+            and i + 1 < len(tokens)
+            and tokens[i + 1] not in CLAUSE_BREAKS
+            and tokens[i + 1] not in NOISE_TOKENS
+            and tokens[i + 1].strip()
+        ):
+            # Attach the hyphen and the next token to the previous result token
+            result[-1] = result[-1] + "-" + tokens[i + 1]
+            i += 2
+            continue
+
+        result.append(tok)
+        i += 1
+
+    return result
+
+
 # main body of phrase extraction
 # input text and various parameters
 # output list of phrases: ["phrase 1", "phrase 2", "phrase 3"]
 class CandidateExtractor:
     def __init__(
         self,
-        path,
-        stop_words_path="stop_words_en.txt",
+        corpus_path: str,
+        stop_words_path: str = "stop_words_en.txt",
         list_seq=pos_tag_patterns,
-        cohesion_filter=True,
-        ngrams_filtered=3,
+        dependency_filter=True,
+        ov_filter=True,
+        cohesion_filter=False,
         additional_text="1",
         f_raw_sc=9,
         f_req_sc=3,
     ):
-        self.path = path  # text in original case
+        self.corpus_path = corpus_path  # FULL PATH
 
         self.cohesion_filter = cohesion_filter  #  Enable or disable the cohesive filter
-        # the minimum n for ngrams that will go through the filter
-        self.ngrams_filtered = ngrams_filtered
+        self.dependency_filter = dependency_filter
+        self.ov_filter = ov_filter
         self.additional_text = additional_text  # if there is additional text, it is used to calculate frequencies, terms are NOT extracted from it
         self.f_req_sc = f_req_sc  # rectified frequency threshold
         self.f_raw_sc = f_raw_sc  # raw frequency threshold
@@ -381,19 +455,19 @@ class CandidateExtractor:
             with open(stop_path, encoding="utf-8") as f:
                 self.stop_words = set(f.read().split(","))
         except FileNotFoundError:
-            print(f"!!!!!!!!!!! stop words file not found at: {stop_path}")
+            print(f"ERROR: stop words file not found at: {stop_path}")
             self.stop_words = set()
         except Exception as e:
-            print(f"!!!!!!!!!!! stop words file could not be opened: {e}")
+            print(f"ERROR: stop words file could not be opened: {e}")
             self.stop_words = set()
 
-    def get_corpus(self, path: str) -> str:
-        file_list = os.listdir(path)
+    def get_corpus(self, corpus_path: str) -> str:
+        file_list = os.listdir(corpus_path)
         texts = []
 
         for filename in file_list:
             if filename.endswith(".txt"):
-                file_path = os.path.join(path, filename)
+                file_path = os.path.join(corpus_path, filename)
                 with open(file_path, "r") as file:
                     text = file.read()
                     texts.append(
@@ -403,7 +477,7 @@ class CandidateExtractor:
         all_texts = " .".join(texts)
         return all_texts
 
-    def all_candidates(self):
+    def ngram_candidates(self):
 
         # Change the tokenizer so that it does not separate words with hyphens.
         # IT-developers create innovative solutions. --> ["IT-developers","create","innovative","solutions","."]
@@ -426,7 +500,7 @@ class CandidateExtractor:
         infix_re = compile_infix_regex(infixes)
         nlp.tokenizer.infix_finditer = infix_re.finditer
 
-        corpus = self.get_corpus(self.path)
+        corpus = self.get_corpus(self.corpus_path)
 
         # removing extra spaces
         corpus = (
@@ -436,36 +510,38 @@ class CandidateExtractor:
             .replace("  ", " ")
         )
 
-        #   text tokenization, parts of speech and position index
+        # text tokenization, parts of speech and position index
         doc = nlp(corpus)
+        #  [ [(token1, pos, index),(token2, pos, index),(token3, pos, index)], [sentence],...]
         text_sent_tokens = tokinizer(doc)
         mwe_list = []
 
         # extracting candidates from each sentence separately
         for sent in text_sent_tokens:
+            # sent = [(token1, pos, index),(token2, pos, index),(token3, pos, index)]
+
+            # returns list of lists of extracted candidates + information about them:
+            # [    [[list of words/Tokens in the phrase], template by which the candidate was extracted, sequence of parts of speech of the candidate, indexes of word positions, number of words, number of characters in the candidate], [6 elems], [6], ...,    ]
+
             temp_mwe_list = filter_ngrams_by_pos_tag(
                 sent, self.list_seq
             )  # Part-of-speech extraction
-            # REVIEW COMMENTED OUT --> this is so extremely slow b/c nlp is called on
-            # THOUSANDS of tokens with no benefit
-            """ temp_mwe_list = filter_propn_noun(
-                temp_mwe_list, nlp
-            )  #  filtering from changing parts of speech """
+
             temp_mwe_list = filter_stop_words(
                 temp_mwe_list, self.stop_words
             )  # stop word filtering
 
-            # temp_mwe_list contains lists of candidates with additional information about them:
-            # [[list of words of the phrase], the template by which the candidate was extracted, the sequence of parts of speech of the candidate, the indices of the positions of words, the number of words, the number of characters in the candidate]
-
-            sent_text = " ".join([s[0] for s in sent])
+            sent_text = " ".join([s[0].lower_ for s in sent])
+            # now list of 7 element list, each inner list = 1 mwe
             temp_mwe_list = [mwe + [sent_text] for mwe in temp_mwe_list]
             mwe_list += temp_mwe_list
 
         # sentence lookup for all extracted phrases
         phrase_sents = defaultdict(list)
+        # mwe_list = list of ALL 7 elem lists for the candidate mwes
+        # mwe[-1] = the full sentence a mwe is from
         for mwe in mwe_list:
-            phrase_sents[concat_cache(mwe[0])].append(mwe[-1])
+            phrase_sents[concat_cache(mwe[0])].append(mwe[-1].strip())
 
         # creating a list of candidates containing only the words of the candidates: [("phrase","one"),("mwe","next"),("phrase","other")]
         mwe_list_n = [tuple(i[0]) for i in mwe_list]
@@ -485,18 +561,175 @@ class CandidateExtractor:
 
         candidate_map = {term: phrase_sents.get(term, []) for term in set(candidates)}
 
+        print(
+            f"CANDIDATE EXTRACTOR: before filtering: {len(candidate_map)} mwe candidates"
+        )
+
+        # ANCHOR - DEPENDENCY FILTER
+
+        if self.dependency_filter == True:
+            # True = rejected or penalized
+            # phrase = list of spacy Tokens/words in the phrase
+            # description of spacy pos and tags here:
+            # https://ashutoshtripathi.com/2020/04/13/parts-of-speech-tagging-and-dependency-parsing-using-spacy-nlp/
+            # https://universaldependencies.org/u/pos/
+
+            def filter_verb_initial(phrase) -> bool:
+                first = phrase[0]
+                if first.pos_ == "VERB":
+                    # allow gerunds/nominalisations tagged as noun by fine-grained tagger
+                    if first.tag_ in ("NN", "NNS"):
+                        return False  # don't filter — it's a nominalisation
+                    return True
+                if first.tag_ in ("VBZ", "VBP", "VBD"):  # conjugated verbs only
+                    return True
+                # VBG (gerund) — only filter if it's truly verbal, not nominal
+                if first.tag_ == "VBG":
+                    # if the next token is a determiner or preposition, it's nominal
+                    if len(phrase) > 1 and phrase[1].pos_ in (
+                        "DET",
+                        "ADP",
+                        "NOUN",
+                        "PROPN",
+                    ):
+                        return False
+                    return True
+                return False
+
+            DEICTIC_DEPS = {"det", "predet"}
+            DEICTIC_TAGS = {"DT", "PDT"}
+
+            def filter_deictic_initial(phrase):
+                first = phrase[0]
+                # demonstratives and discourse-anchored adjectives
+                if first.lemma_.lower() in {
+                    "this",
+                    "that",
+                    "these",
+                    "those",
+                    "such",
+                    "said",
+                    "aforementioned",
+                    "same",
+                }:
+                    return True
+
+                # catches "some", "any", "each", "every"
+                if first.tag_ in DEICTIC_TAGS:
+                    return True
+
+                if first.pos_ in DEICTIC_DEPS:
+                    return True
+                return False
+
+            # REVIEW covered by filter_stop_words but that may be too harsh?
+            def filter_stop_word_initial(phrase):
+                first = phrase[0]
+                # first term is a stop word
+                if first.lemma_.lower() in self.stop_words:
+                    return True
+                return False
+
+            def filter_quantifier_initial(phrase):
+                first = phrase[0]
+                if first.pos_ == "NUM":
+                    return True
+                # spaCy tags "several", "many", etc as ADJ
+                if first.pos_ == "ADJ" and first.lemma_.lower() in {
+                    "several",
+                    "many",
+                    "few",
+                    "various",
+                    "certain",
+                    "enough",
+                    "plenty",
+                }:
+                    return True
+                return False
+
+            SCALAR_ADJ = {
+                # Evaluative / stance
+                "effective",
+                "appropriate",
+                "adequate",
+                "proper",
+                "sound",
+                "thorough",
+                "coherent",
+                "comparable",
+                "exceptional",
+                "sufficient",
+                # Intensifiers / degree
+                "comprehensive",
+                "enhanced",
+                "firm",
+                "strong",
+                "dissuasive",
+                "systematic",
+                "improved",
+                "increased",
+                "broader",
+                "clearer",
+                "deeper",
+                "further",
+                "greater",
+                "higher",
+                "stronger",
+                "wider",
+                # Deictic-adjacent
+                "current",
+                "overall",
+                "remaining",
+                "potential",
+                "particular",
+                "special",
+                "full",
+                "complete",
+                # Scalar quantity
+                "major",
+                "main",
+                "key",
+                "important",
+                "necessary",
+                "unnecessary",  # might need to remove negations too!
+                "limited",
+                "central",
+                "local",
+            }
+
+            def filter_scalar_adj_initial(phrase):
+                first = phrase[0]
+                if first.pos_ == "ADJ" and first.lemma_.lower() in SCALAR_ADJ:
+                    return True
+                return False
+
+            dep_filters = [
+                filter_verb_initial,
+                filter_deictic_initial,
+                filter_quantifier_initial,
+                filter_scalar_adj_initial,
+            ]
+
+            filtered_dep = {}
+            # mwe_list is a list of 7 elem lists for each phrase in Tokens + info
+            # first elem = tuple of spacy tokens, last = full sentence
+            for mwe in mwe_list:
+                # A candidate is kept only if ALL filter functions return False
+                # (i.e. none of the "bad pattern" checks fire)
+                if not any(f(mwe[0]) for f in dep_filters):
+                    filtered_dep[concat_cache(mwe[0])] = mwe[-1]
+
+            common_keys = filtered_dep.keys() & candidate_map.keys()
+            candidate_map = {k: candidate_map[k] for k in common_keys}
+            # candidate_map = filtered_dep
+            print(
+                f"CANDIDATE EXTRACTOR: after dependency filter: {len(candidate_map)} mwe candidates"
+            )
+
+        # ANCHOR - COHESION FILTER
+
         # if the cohesive filter is on
         if self.cohesion_filter == True:
-            short_mwes = {
-                k: v
-                for k, v in candidate_map.items()
-                if len(k.split()) <= self.ngrams_filtered
-            }
-            long_mwes = {
-                k: v
-                for k, v in candidate_map.items()
-                if len(k.split()) > self.ngrams_filtered
-            }
 
             token_list = [tok.text.lower() for tok in doc]
             if (
@@ -511,6 +744,11 @@ class CandidateExtractor:
                 )
                 ref_doc = nlp(text_ref)
                 token_list = token_list + [tok.text.lower() for tok in ref_doc]
+
+            # i = mwe = 7 elem list of a phrase, i[0] = tuple of spaCy Tokens/words in the phrase
+            # we don't need Tokens anymore so convert all to text
+            for item in mwe_list:
+                item[0] = [token.lower_ for token in item[0]]
 
             all_cand_r = [tuple(i[0]) for i in mwe_list]
             possible_mwe = sorted(
@@ -580,7 +818,6 @@ class CandidateExtractor:
             cand_mwe = [concat_cache(i[0]) for i in candidates + candid_q]
             cand_mwe1 = [concat_cache(i[0]) for i in data1]
             cand_mwe2 = [concat_cache(i[0]) for i in data2]
-
             cand = cand_mwe + cand_mwe1 + cand_mwe2
             candidates = [
                 i
@@ -588,9 +825,161 @@ class CandidateExtractor:
                 if ((i[-1] not in punc_without) and (i[-1] not in string.punctuation))
             ]
 
-        candidate_map = {term: phrase_sents.get(term, []) for term in set(candidates)}
+            candidate_map = {
+                term: phrase_sents.get(term, []) for term in set(candidates)
+            }
 
-        print(f"#### number of mwe extracted: {len(candidate_map)}")
+            print(
+                f"CANDIDATE EXTRACTOR: after cohesion (original) filter: {len(candidate_map)} mwe candidates"
+            )
+
+        # ANCHOR - OV FILTER
+        if self.ov_filter == True:
+
+            def build_av_scores(token_list):
+                # find all positions of each n-gram
+                positions = defaultdict(list)
+                n = len(token_list)
+
+                for length in range(1, 8):  # up to 7-grams
+                    for i in range(n - length + 1):
+                        ngram = tuple(token_list[i : i + length])
+                        positions[ngram].append(i)
+
+                av_scores = {}
+                for ngram, pos_list in positions.items():
+                    left_neighbors = set()
+                    right_neighbors = set()
+                    for p in pos_list:
+                        if p > 0:
+                            left_neighbors.add(token_list[p - 1])
+                        if p + len(ngram) < n:
+                            right_neighbors.add(token_list[p + len(ngram)])
+                    lav = len(left_neighbors)
+                    rav = len(right_neighbors)
+                    av = min(lav, rav)
+                    av_scores[ngram] = math.log(
+                        av + 1
+                    )  # log-transform, +1 for smoothing
+
+                return av_scores, positions
+
+            def overlap_variety(candidate_tokens, av_scores, token_list, positions):
+                s = tuple(candidate_tokens)
+                n = len(s)
+
+                if n < 2:
+                    return 0.0
+
+                cand_av = av_scores.get(s, 0.0)
+
+                # collect all overlapping strings at each overlap level
+                # overlap level i means i characters/tokens overlap
+                total_weighted = 0.0
+                total_weight = 0.0
+
+                for overlap_level in range(1, n):
+                    weight = 1.0 / (n - overlap_level)  # wi = 1/|s - overlap|
+
+                    # preceding overlapping strings: start overlap_level positions before candidate
+                    # e.g. for "criminal law enforcement" at overlap_level=1,
+                    # preceding overlap is the trigram ending at "law" = ("X", "criminal", "law")
+
+                    overlapping = []
+
+                    # get all positions of candidate
+                    cand_positions = positions.get(s, [])
+
+                    for pos in cand_positions:
+                        # preceding overlap: string of length n starting overlap_level before
+                        pre_start = pos - overlap_level
+                        if pre_start >= 0:
+                            pre_string = tuple(token_list[pre_start : pre_start + n])
+                            overlapping.append(pre_string)
+
+                        # following overlap: string of length n starting overlap_level into candidate
+                        post_start = pos + overlap_level
+                        if post_start + n <= len(token_list):
+                            post_string = tuple(token_list[post_start : post_start + n])
+                            overlapping.append(post_string)
+
+                    if not overlapping:
+                        continue
+
+                    # fraction of overlapping strings with lower AV than candidate
+                    better = sum(
+                        1 for o in overlapping if av_scores.get(o, 0.0) < cand_av
+                    )
+                    ov_i = better / len(overlapping)
+
+                    total_weighted += weight * ov_i
+                    total_weight += weight
+
+                return total_weighted / total_weight if total_weight > 0 else 0.0
+
+            token_list_ov = [tok.lower_ for tok in doc]
+
+            # include additional text if needed
+            if len(self.additional_text) > 10:
+                text_ref_ov = (
+                    self.additional_text.replace(" -", "-")
+                    .replace("- ", "-")
+                    .replace(" '", "'")
+                    .replace("  ", " ")
+                    .lower()
+                )
+                ref_doc_ov = nlp(text_ref_ov)
+                token_list_ov = token_list_ov + [tok.lower_ for tok in ref_doc_ov]
+
+            av_scores_ov, positions_ov = build_av_scores(token_list_ov)
+
+            # OV score 0.0  = the candidate's AV is NEVER better than its overlapping strings -- very likely a fragment / incoherent span
+            # score 1.0  = the candidate's AV is ALWAYS better than its overlapping strings, likely a genuine tight unit
+
+            OV_THRESHOLD = 0.0
+
+            # True = skip OV check for bigrams
+            # b/c OV is weak on bigrams, not enough overlaps
+            OV_PASSTHROUGH_BIGRAMS = True
+
+            filtered_ov = {}
+
+            for term, sents in candidate_map.items():
+                tokens = tuple(term.split())
+
+                # unigrams: no internal boundaries, pass through with score = 1.0
+                if len(tokens) < 2:
+                    filtered_ov[term] = sents
+                    continue
+
+                # bigrams bypass OV filter entirely or not
+                if OV_PASSTHROUGH_BIGRAMS and len(tokens) == 2:
+                    filtered_ov[term] = sents
+                    continue
+
+                score = overlap_variety(
+                    tokens,
+                    av_scores_ov,
+                    token_list_ov,
+                    positions_ov,
+                )
+
+                if score > OV_THRESHOLD:
+                    filtered_ov[term] = sents
+
+            candidate_map = filtered_ov
+            print(
+                f"CANDIDATE EXTRACTOR: after OV filter: {len(candidate_map)} candidates "
+            )
+
+        print(
+            f"CANDIDATE EXTRACTOR: TOTAL number of ngrams extracted: {len(candidate_map)}"
+        )
+
+        candidate_map = {
+            term: [remove_punc_spaces(sent) for sent in sents]
+            for term, sents in candidate_map.items()
+        }
 
         return candidate_map
 
@@ -614,7 +1003,7 @@ class CandidateExtractor:
         infix_re = compile_infix_regex(infixes)
         nlp.tokenizer.infix_finditer = infix_re.finditer
 
-        corpus = self.get_corpus(self.path)
+        corpus = self.get_corpus(self.corpus_path)
         corpus = (
             corpus.replace(" -", "-")
             .replace("- ", "-")
@@ -647,5 +1036,13 @@ class CandidateExtractor:
                 continue
             unigram_map[w].append(token.sent.text.lower())
 
-        print(f"#### number of unigrams extracted: {len(unigram_map)}")
+        print(
+            f"CANDIDATE EXTRACTOR: TOTAL number of unigrams extracted: {len(unigram_map)}"
+        )
+
+        unigram_map = {
+            term: [remove_punc_spaces(sent) for sent in sents]
+            for term, sents in unigram_map.items()
+        }
+
         return dict(unigram_map)

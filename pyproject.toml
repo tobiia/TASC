@@ -9,4 +9,5 @@ dependencies = []
 where = ["src"]
 
 [project.scripts]
-run = "term_extraction.main:main"
+test_term = "term_extraction.main:main"
+test_cand = "term_extraction.main:candidate_test"

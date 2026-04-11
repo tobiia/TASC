@@ -6,8 +6,8 @@ from term_extraction.models import TermSummary
 class EmbeddingCache:
     # corp, equi, htfl, wind
     # uni, uni_vanilla, ngram, ngram_vanilla
-    def __init__(self, cache_domain, gram):
-        self.path = f"cache_{cache_domain}_{gram}.npz"
+    def __init__(self, cache_domain, gram_type):
+        self.path = f"cache_{cache_domain}_{gram_type}.npz"
 
     def save_cache(self, term_candidates, sentence_cache, candidates):
         self._save_all_cache(term_candidates, sentence_cache, candidates)

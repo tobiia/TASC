@@ -1,6 +1,8 @@
 import numpy as np
-
-from term_extraction.models import TermSummary
+import os
+from representation.models import TermSummary
+from representation.embed_cache import EmbeddingCache
+from representation.embedding_creator import EmbeddingCreator
 
 
 class EmbeddingCache:
@@ -184,3 +186,32 @@ class EmbeddingCache:
             )
 
         return sentence_cache
+
+
+def run_cache(
+    corpus: dict,
+    corpus_name: str,
+    gram_type: str,  # "uni" or "ngram"
+):
+    print(f"******************************************** setting up embedding data...")
+    # ex. cache_path="cache_corp_uni.npz",
+    cache = EmbeddingCache(cache_domain=corpus_name, gram_type=gram_type)
+
+    if os.path.exists(cache.path):
+        print("******************************************** loading from cache...")
+        term_candidates, sentence_cache, orig_candidates = cache.load_cache()
+
+        print(f"EMBEDDING CACHE: number of initial candidates: {len(orig_candidates)}")
+        print(
+            f"EMBEDDING CACHE: number of candidates after word embeddings: {len(term_candidates)}"
+        )
+    else:
+        print("ERROR: no cache found! getting data...")
+        embedding_creator = EmbeddingCreator(corpus)
+        term_candidates, sentence_cache, orig_candidates = (
+            embedding_creator.create_embeddings()
+        )
+        print("******************************************** caching...")
+        cache.save_cache(term_candidates, sentence_cache, orig_candidates)
+
+    return term_candidates, sentence_cache, orig_candidates

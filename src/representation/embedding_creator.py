@@ -12,6 +12,7 @@ from transformers.utils import logging as hf_logging
 
 hf_logging.set_verbosity_error()
 
+# TODO pick specific layers -- papers say top 4? depends on if focusing on sense or lSC
 """Pipeline for creating token-level contextual word embeddings
 
 Implements the word occurrence representation step of the

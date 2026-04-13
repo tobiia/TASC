@@ -7,9 +7,10 @@ from representation.embedding_creator import EmbeddingCreator
 
 class EmbeddingCache:
     # corp, equi, htfl, wind
-    # uni, uni_vanilla, ngram, ngram_vanilla
-    def __init__(self, cache_domain, gram_type):
-        self.path = f"cache_{cache_domain}_{gram_type}.npz"
+    # xlr, bert, mbert, xl-land
+    def __init__(self, cache_domain, model_name, layer=None):
+        layer_str = f"_L{layer}" if layer is not None else ""
+        self.path = f"cache_{cache_domain}_{model_name}{layer_str}.npz"
 
     def save_cache(self, term_candidates, sentence_cache, candidates):
         self._save_all_cache(term_candidates, sentence_cache, candidates)
@@ -191,11 +192,11 @@ class EmbeddingCache:
 def run_cache(
     corpus: dict,
     corpus_name: str,
-    gram_type: str,  # "uni" or "ngram"
+    model_name: str,
+    layer: int | None = None,
 ):
     print(f"******************************************** setting up embedding data...")
-    # ex. cache_path="cache_corp_uni.npz",
-    cache = EmbeddingCache(cache_domain=corpus_name, gram_type=gram_type)
+    cache = EmbeddingCache(cache_domain=corpus_name, model_name=model_name, layer=layer)
 
     if os.path.exists(cache.path):
         print("******************************************** loading from cache...")

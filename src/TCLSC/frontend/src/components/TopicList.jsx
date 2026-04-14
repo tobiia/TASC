@@ -26,6 +26,12 @@ export default function TopicList({ topics, activeTopic, onSelect }) {
               className={`topic-item ${isActive ? 'active' : ''}`}
               onClick={() => onSelect(isActive ? null : topic.id)}
             >
+              <div className="topic-num" style={{ colour }}>
+                topic {topic.id}
+              </div>
+              <div className="topic-words">
+                {topic.words.slice(0, 6).join(' · ')}
+              </div>
             </div>
           );
         })}

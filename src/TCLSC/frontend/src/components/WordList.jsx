@@ -1,7 +1,7 @@
 // left panel
 // shows all available words + toggle
 
-export default function WordList({ words }) {
+export default function WordList({ words, activeColourMap, onToggle }) {
   // activeColourMap = obj, { bank: "###", ... }
   return (
     <div className="panel">
@@ -16,11 +16,14 @@ export default function WordList({ words }) {
         )}
 
         {words.map((word) => {
+          const isActive = word in activeColourMap;
+          const colour = activeColourMap[word];
 
           return (
             <div
               key={word}
               className={`word-item ${isActive ? 'active' : ''}`}
+              onClick={() => onToggle(word)}
             >
               <span>{word}</span>
               <div

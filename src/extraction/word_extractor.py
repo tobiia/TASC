@@ -21,13 +21,11 @@ punc_without.update(["»", "«"])
 punc_all = punc_without.copy()
 punc_without.remove("-")
 punc_without.remove("'")
-num_set = set("1234567890")
 CLAUSE_BREAKS = {",", ";", ":", "(", ")", "[", "]", "—", "–", "-", "/"}
 NOISE_TOKENS = set(string.punctuation).union(("''", "``", "..."))
 
 
 def remove_punc_spaces(text):
-    """Remove spaces before punctuation and around apostrophes."""
     # Remove spaces before common punctuation marks
     text = re.sub(r"\s+([.,;:!?)\]}–—])", r"\1", text)
     # Remove spaces around apostrophes
@@ -95,7 +93,7 @@ class WordExtractor:
         for filename in file_list:
             if filename.endswith(".txt"):
                 file_path = os.path.join(corpus_path, filename)
-                with open(file_path, "r") as file:
+                with open(file_path, "r", encoding="utf-8") as file:
                     text = file.read()
                     texts.append(
                         text.replace("  ", " ").replace(" -", "-").replace(" - ", "-")
@@ -138,7 +136,6 @@ class WordExtractor:
         uni_pos_set = set(
             pattern for pattern in self.list_seq if isinstance(pattern, str)
         )
-        digit_punc_set = num_set | punc_all
 
         unigram_map = defaultdict(list)
         for token in doc:
@@ -151,7 +148,6 @@ class WordExtractor:
                 or w[-1] in punc_all
                 or not set(w).isdisjoint(punc_without)  # skip if contains punctuation
                 or not set(w).isdisjoint(string.digits)  # skip if contains digits
-                or set(w)
             ):
                 continue
             unigram_map[token.lemma_].append(token.sent.text.lower())

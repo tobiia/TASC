@@ -14,7 +14,7 @@ from transformers.utils import logging as hf_logging
 
 hf_logging.set_verbosity_error()
 
-# ----------------------------------------------------------------
+# -----------------------------------------------------------
 # ANCHOR - config
 
 parser = argparse.ArgumentParser(
@@ -36,19 +36,19 @@ LAYERS = range(3, 13)
 
 
 def main():
-    print("*** setting up...")
+    print("***************** setting up...")
     x_words, y_words = extract_common_words(args.corpus1, args.corpus2)
     x_name = Path(args.corpus1).stem
     y_name = Path(args.corpus2).stem
 
     gold_df = load_gold_set(args.gold)
-    gold_series = gold_df.set_index("word")["gold_score"]
+    gold_series = gold_df.set_index("lemma")["change_graded"]
     words = gold_series.index.tolist()
 
     results = []
 
     for model_name, layer in product(args.models, LAYERS):
-        print(f"*** model={model_name}  layer={layer}")
+        print(f"***************** model={model_name};    layer={layer}")
         x_embeds, _, _ = run_cache(x_words, x_name, model_name, layer=layer)
         y_embeds, _, _ = run_cache(y_words, y_name, model_name, layer=layer)
 
@@ -74,7 +74,9 @@ def main():
                     word_scores[word] = prt(x_vec, y_vec)
 
             if not word_scores:
-                print(f"ERROR - SCORING: issue computing {word} score")
+                print(
+                    f"ERROR - SCORING: no scores computed for fn={fn_name}, model={model_name}, layer={layer}"
+                )
                 continue
 
             pred = pd.Series(word_scores)

@@ -1,24 +1,18 @@
 import numpy as np
 import os
 from representation.models import TermSummary
-from representation.embed_cache import EmbeddingCache
 from representation.embedding_creator import EmbeddingCreator
 
 
 class EmbeddingCache:
-    # corp, equi, htfl, wind
-    # xlr, bert, mbert, xl-land
+    # semeval2020
+    # mini, mpnet, roberta, xllexeme, tempobert
     def __init__(self, cache_domain, model_name, layer=None):
         layer_str = f"_L{layer}" if layer is not None else ""
-        self.path = f"cache_{cache_domain}_{model_name}{layer_str}.npz"
+        safe_name = model_name.replace("/", "_")
+        self.path = f"cache_{cache_domain}_{safe_name}{layer_str}.npz"
 
     def save_cache(self, term_candidates, sentence_cache, candidates):
-        self._save_all_cache(term_candidates, sentence_cache, candidates)
-
-    def load_cache(self):
-        return self._load_all_cache()
-
-    def _save_all_cache(self, term_candidates, sentence_cache, candidates):
 
         cand_keys = list(term_candidates.keys())
 
@@ -53,7 +47,7 @@ class EmbeddingCache:
             cand_dict_offsets=cand_dict_offsets,
         )
 
-    def _load_all_cache(self):
+    def load_cache(self):
 
         data = self._load_common(self.path)
 
@@ -195,11 +189,11 @@ def run_cache(
     model_name: str,
     layer: int | None = None,
 ):
-    print(f"******************************************** setting up embedding data...")
+    print(f"***************** setting up embedding data...")
     cache = EmbeddingCache(cache_domain=corpus_name, model_name=model_name, layer=layer)
 
     if os.path.exists(cache.path):
-        print("******************************************** loading from cache...")
+        print("***************** loading from cache...")
         term_candidates, sentence_cache, orig_candidates = cache.load_cache()
 
         print(f"EMBEDDING CACHE: number of initial candidates: {len(orig_candidates)}")
@@ -207,12 +201,12 @@ def run_cache(
             f"EMBEDDING CACHE: number of candidates after word embeddings: {len(term_candidates)}"
         )
     else:
-        print("ERROR: no cache found! getting data...")
-        embedding_creator = EmbeddingCreator(corpus)
+        print("***************** no cache found, computing embeddings...")
+        embedding_creator = EmbeddingCreator(corpus, model_name=model_name, token_embedding_layer=layer)
         term_candidates, sentence_cache, orig_candidates = (
             embedding_creator.create_embeddings()
         )
-        print("******************************************** caching...")
+        print("***************** caching...")
         cache.save_cache(term_candidates, sentence_cache, orig_candidates)
 
     return term_candidates, sentence_cache, orig_candidates

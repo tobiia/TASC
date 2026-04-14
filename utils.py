@@ -32,11 +32,10 @@ def append_metrics(file_path, threshold, label, precision, recall, f1_score):
 
 
 def load_gold_set(path):
-
-    df = pd.read_table(path, sep="\t", header=None, names=["word", "gold_score"])
-
-    # common_terms = df.loc[df["label"] == "Common_Term", "term"].to_list()
-
+    with open(path, encoding="utf-8") as f:
+        first_line = f.readline()
+    sep = "\t" if "\t" in first_line else ","
+    df = pd.read_csv(path, sep=sep, usecols=["lemma", "change_graded"])
     return df
 
 

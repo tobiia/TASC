@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import Plot from '../plotly';
 import { TOPIC_COLOURS } from './TopicList';
 
-export default function PlotCanvas({ activeWords, topics, activeTopic }) {
+export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicClick }) {
   // activeWords: array of { word, color, trajectory: [{ x, y, period }] }
   // topics:      array of { id, words, x, y, radius }
 
@@ -66,6 +66,8 @@ export default function PlotCanvas({ activeWords, topics, activeTopic }) {
           size: trajectory.map((_, i) => i === total - 1 ? 8 : 6),
           line: { width: 1, color: 'white' },
         },
+        customdata: trajectory.map(p => ({ type: 'word', word, period: p.period })),
+        hovertemplate: `<b>${word}</b><br>%{customdata.period}<extra></extra>`,
       });
     });
 
@@ -94,6 +96,14 @@ export default function PlotCanvas({ activeWords, topics, activeTopic }) {
         layout={{
           autosize: true,
           showlegend: true,
+          legend: {
+            x: 0.01,
+            y: 0.99,
+            bgcolor: 'rgba(255,255,255,0.85)',
+            bordercolor: 'rgba(0,0,0,0.1)',
+            borderwidth: 1,
+            font: { size: 12 },
+          },
           margin: { l: 40, r: 20, t: 20, b: 40 },
           xaxis: { showgrid: false, zeroline: false, showticklabels: false },
           yaxis: { showgrid: false, zeroline: false, showticklabels: false },
@@ -109,6 +119,10 @@ export default function PlotCanvas({ activeWords, topics, activeTopic }) {
         style={{ width: '100%', height: '100%' }}
         onClick={(e) => {
           if (!e.points.length) return;
+          const pt = e.points[0];
+          if (pt.customdata?.type === 'topic') {
+            onTopicClick(pt.customdata.id);
+          }
         }}
       />
     </div>

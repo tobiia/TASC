@@ -1,7 +1,10 @@
+// MUST USE "COLOR" NOT COLOURS!!!
+
 import { useMemo } from 'react';
+import Plot from '../plotly';
 import { TOPIC_COLOURS } from './TopicList';
 
-export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicClick }) {
+export default function PlotCanvas({ activeWords, topics, activeTopic }) {
   // activeWords: array of { word, color, trajectory: [{ x, y, period }] }
   // topics:      array of { id, words, x, y, radius }
 
@@ -9,7 +12,7 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
   const traces = useMemo(() => {
     const result = [];
 
-    // topic hazes
+    // topic hazes per centroid
     if (topics.length > 0) {
       result.push({
         type: 'scatter',
@@ -23,14 +26,20 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
         marker: {
           size: topics.map(t => Math.max(40, t.radius * 120)),
           color: topics.map((_, i) => TOPIC_COLOURS[i % TOPIC_COLOURS.length]),
+          opacity: 0.15,
           line: {
+            width: topics.map(t => t.id === activeTopic ? 2 : 0),
             color: topics.map((_, i) => TOPIC_COLOURS[i % TOPIC_COLOURS.length]),
           },
         },
+        customdata: topics.map(t => ({ type: 'topic', id: t.id })),
+        hovertemplate: '<b>Topic %{customdata.id}</b><extra></extra>',
       });
     }
 
+    // WORD TRAJECTORIES
     activeWords.forEach(({ word, color, trajectory }) => {
+      if (!trajectory || trajectory.length === 0) return;
 
       const total = trajectory.length;
 
@@ -50,11 +59,33 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
           color: trajectory.map((_, i) => i === total - 1 ? color : '#999'),
         },
         line: { color, width: 1.5 },
+        marker: {
+          // a value of 0 = blue (early), 1 = red (late)
+          color: trajectory.map((_, i) => total <= 1 ? 0 : i / (total - 1)),
+          colorscale: [[0, '#378ADD'], [1, '#D85A30']],
+          size: trajectory.map((_, i) => i === total - 1 ? 8 : 6),
+          line: { width: 1, color: 'white' },
+        },
       });
     });
 
     return result;
   }, [activeWords, topics, activeTopic]);
+
+  const hasData = activeWords.length > 0 || topics.length > 0;
+
+  if (!hasData) {
+    return (
+      <div className="plot-area">
+        <div className="plot-placeholder">
+          <div className="plot-placeholder-big">Select words to visualise</div>
+          <div className="plot-placeholder-small">
+            Embeddings will appear here, coloured by time period
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="plot-area">
@@ -63,14 +94,6 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
         layout={{
           autosize: true,
           showlegend: true,
-          legend: {
-            x: 0.01,
-            y: 0.99,
-            bgcolor: 'rgba(255,255,255,0.85)',
-            bordercolor: 'rgba(0,0,0,0.1)',
-            borderwidth: 1,
-            font: { size: 12 },
-          },
           margin: { l: 40, r: 20, t: 20, b: 40 },
           xaxis: { showgrid: false, zeroline: false, showticklabels: false },
           yaxis: { showgrid: false, zeroline: false, showticklabels: false },
@@ -86,10 +109,6 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
         style={{ width: '100%', height: '100%' }}
         onClick={(e) => {
           if (!e.points.length) return;
-          const pt = e.points[0];
-          if (pt.customdata?.type === 'topic') {
-            onTopicClick(pt.customdata.id);
-          }
         }}
       />
     </div>

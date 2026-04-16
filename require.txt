@@ -1,0 +1,5 @@
+spacy
+pandas
+numpy
+top2vec
+fastapi[standard]

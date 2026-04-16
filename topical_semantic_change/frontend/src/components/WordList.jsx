@@ -1,8 +1,8 @@
 // left panel
 // shows all available words + toggle
 
-export default function WordList({ words, activeColourMap, onToggle }) {
-  // activeColourMap = obj, { bank: "###", ... }
+export default function WordList({ words, activeColorMap, onToggle }) {
+  // activeColorMap = obj, { bank: "###", ... }
   return (
     <div className="panel">
       <div className="panel-header">
@@ -16,8 +16,8 @@ export default function WordList({ words, activeColourMap, onToggle }) {
         )}
 
         {words.map((word) => {
-          const isActive = word in activeColourMap;
-          const colour = activeColourMap[word];
+          const isActive = word in activeColorMap;
+          const color = activeColorMap[word];
 
           return (
             <div
@@ -29,8 +29,8 @@ export default function WordList({ words, activeColourMap, onToggle }) {
               <div
                 className="dot"
                 style={{
-                  background: isActive ? colour : 'transparent',
-                  border: `1.5px solid ${isActive ? colour : 'var(--colour-border-secondary, #ccc)'}`,
+                  background: isActive ? color : 'transparent',
+                  border: `1.5px solid ${isActive ? color : 'var(--color-border-secondary, #ccc)'}`,
                 }}
               />
             </div>

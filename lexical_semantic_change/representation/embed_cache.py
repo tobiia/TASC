@@ -1,7 +1,9 @@
 import numpy as np
 import os
-from representation.models import TermSummary
-from representation.embedding_creator import EmbeddingCreator
+from .models import TermSummary
+from .embedding_creator import EmbeddingCreator
+
+# REVIEW where to save files?
 
 
 class EmbeddingCache:
@@ -88,11 +90,9 @@ class EmbeddingCache:
 
     def _load_common(self, path):
         data = np.load(path, allow_pickle=True)
-
-        return {
-            "candidates": data["candidate_list"],
-            **data,
-        }
+        result = {k: data[k] for k in data.files}
+        result["candidates"] = result.pop("candidate_list")
+        return result
 
     def _flatten_sent_embeds(self, term_candidates, candidates):
         # list of ndarrays = embeddings for each sentence stacked
@@ -108,7 +108,7 @@ class EmbeddingCache:
             # B (3, 768) -> start = 5, end = 8 -> sent_embeds_flat[5:8]
             sent_offsets.append(sent_offsets[-1] + len(se))
         # sent_embeds_flat (8, 768) after vstack
-        return np.vstack(sent_embeds_flat), np.array(sent_offsets)
+        return (np.vstack(sent_embeds_flat) if sent_embeds_flat else np.empty((0,))), np.array(sent_offsets)
 
     def _flatten_word_embeds_all(self, term_candidates, candidates):
         word_embeds_flat = []
@@ -121,7 +121,7 @@ class EmbeddingCache:
             word_embeds_flat.append(we)
             word_offsets.append(word_offsets[-1] + len(we))
 
-        return np.vstack(word_embeds_flat), np.array(word_offsets)
+        return (np.vstack(word_embeds_flat) if word_embeds_flat else np.empty((0,))), np.array(word_offsets)
 
     # storing the embeddings for each unique sentence
     def _flatten_sentence_cache(self, sentence_cache):
@@ -140,7 +140,7 @@ class EmbeddingCache:
         return (
             np.array(cache_words, dtype=object),
             np.array(cache_offsets),
-            np.vstack(cache_embeds_flat),
+            np.vstack(cache_embeds_flat) if cache_embeds_flat else np.empty((0,)),
         )
 
     def _flatten_candidates(self, candidates):
@@ -202,7 +202,9 @@ def run_cache(
         )
     else:
         print("***************** no cache found, computing embeddings...")
-        embedding_creator = EmbeddingCreator(corpus, model_name=model_name, token_embedding_layer=layer)
+        embedding_creator = EmbeddingCreator(
+            corpus, model_name=model_name, token_embedding_layer=layer
+        )
         term_candidates, sentence_cache, orig_candidates = (
             embedding_creator.create_embeddings()
         )

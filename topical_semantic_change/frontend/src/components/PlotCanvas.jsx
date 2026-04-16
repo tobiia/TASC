@@ -1,35 +1,35 @@
-// MUST USE "COLOR" NOT COLOURS!!!
+// 3D visualization of word embeddings and topics over time
 
 import { useMemo } from 'react';
 import Plot from '../plotly';
-import { TOPIC_COLOURS } from './TopicList';
+import { TOPIC_COLORS } from './TopicList';
 
 export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicClick }) {
-  // activeWords: array of { word, color, trajectory: [{ x, y, period }] }
-  // topics:      array of { id, words, x, y, radius }
+  // activeWords: array of { word, color, trajectory: [{ x, y, z, period }] }
+  // topics:      array of { id, words, x, y, z, radius }
 
-  // only recalculates when activeWords, topics, or activeTopic change
   const traces = useMemo(() => {
     const result = [];
 
-    // topic hazes per centroid
+    // topic spheres (markers) at centroids
     if (topics.length > 0) {
       result.push({
-        type: 'scatter',
+        type: 'scatter3d',
         mode: 'markers+text',
         name: 'topics',
         x: topics.map(t => t.x),
         y: topics.map(t => t.y),
+        z: topics.map(t => t.z),
         text: topics.map(t => `topic ${t.id}`),
-        textposition: 'bottom center',
-        textfont: { size: 11 },
+        textposition: 'top center',
+        textfont: { size: 10 },
         marker: {
-          size: topics.map(t => Math.max(40, t.radius * 120)),
-          color: topics.map((_, i) => TOPIC_COLOURS[i % TOPIC_COLOURS.length]),
-          opacity: 0.15,
+          size: topics.map(t => Math.max(5, t.radius * 15)),
+          color: topics.map((_, i) => TOPIC_COLORS[i % TOPIC_COLORS.length]),
+          opacity: 0.6,
           line: {
-            width: topics.map(t => t.id === activeTopic ? 2 : 0),
-            color: topics.map((_, i) => TOPIC_COLOURS[i % TOPIC_COLOURS.length]),
+            width: topics.map(t => t.id === activeTopic ? 3 : 0),
+            color: topics.map((_, i) => TOPIC_COLORS[i % TOPIC_COLORS.length]),
           },
         },
         customdata: topics.map(t => ({ type: 'topic', id: t.id })),
@@ -37,30 +37,27 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
       });
     }
 
-    // WORD TRAJECTORIES
+    // WORD TRAJECTORIES (lines + markers through time)
     activeWords.forEach(({ word, color, trajectory }) => {
       if (!trajectory || trajectory.length === 0) return;
 
       const total = trajectory.length;
 
       result.push({
-        type: 'scatter',
+        type: 'scatter3d',
         mode: 'lines+markers+text',
         name: word,
         x: trajectory.map(p => p.x),
         y: trajectory.map(p => p.y),
-        // show the year on every dot + the word name on the last dot
+        z: trajectory.map(p => p.z),
         text: trajectory.map((p, i) => i === total - 1 ? word : p.period),
-        textposition: trajectory.map((_, i) => i === total - 1 ? 'middle right' : 'top center'),
+        textposition: 'top center',
         textfont: {
-          // last label is bigger and uses the word colour
-          size: trajectory.map((_, i) => i === total - 1 ? 13 : 10),
-          // colour each dot indiv w marker.color array
+          size: trajectory.map((_, i) => i === total - 1 ? 12 : 10),
           color: trajectory.map((_, i) => i === total - 1 ? color : '#999'),
         },
-        line: { color, width: 1.5 },
+        line: { color, width: 2 },
         marker: {
-          // a value of 0 = blue (early), 1 = red (late)
           color: trajectory.map((_, i) => total <= 1 ? 0 : i / (total - 1)),
           colorscale: [[0, '#378ADD'], [1, '#D85A30']],
           size: trajectory.map((_, i) => i === total - 1 ? 8 : 6),
@@ -82,7 +79,7 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
         <div className="plot-placeholder">
           <div className="plot-placeholder-big">Select words to visualise</div>
           <div className="plot-placeholder-small">
-            Embeddings will appear here, coloured by time period
+            Embeddings will appear here, colored by time period
           </div>
         </div>
       </div>
@@ -104,9 +101,13 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
             borderwidth: 1,
             font: { size: 12 },
           },
-          margin: { l: 40, r: 20, t: 20, b: 40 },
-          xaxis: { showgrid: false, zeroline: false, showticklabels: false },
-          yaxis: { showgrid: false, zeroline: false, showticklabels: false },
+          scene: {
+            xaxis: { showgrid: false, zeroline: false },
+            yaxis: { showgrid: false, zeroline: false },
+            zaxis: { showgrid: false, zeroline: false },
+            bgcolor: 'rgba(240,240,240,0.1)',
+          },
+          margin: { l: 0, r: 0, t: 0, b: 0 },
           plot_bgcolor: 'transparent',
           paper_bgcolor: 'transparent',
           hovermode: 'closest',

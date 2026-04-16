@@ -10,7 +10,7 @@ from spacy.util import compile_infix_regex
 
 # from spacy.tokens import Doc, Token
 
-from config import TERM_PKG
+from ..config import EXTRACT_DIR
 
 # Parts of speech templates
 pos_tag_patterns = ["PROPN", "NOUN", "ADJ", "VERB", "ADV"]
@@ -76,7 +76,7 @@ class WordExtractor:
         self.model_nlp.max_length = 2_000_000
 
         try:
-            stop_path = TERM_PKG / stop_words_path
+            stop_path = EXTRACT_DIR / stop_words_path
             with open(stop_path, encoding="utf-8") as f:
                 self.stop_words = set(f.read().split(","))
         except FileNotFoundError:
@@ -150,7 +150,7 @@ class WordExtractor:
                 or not set(w).isdisjoint(string.digits)  # skip if contains digits
             ):
                 continue
-            unigram_map[token.lemma_].append(token.sent.text.lower())
+            unigram_map[token.lower_].append(token.sent.text.lower())
 
         print(f"WORD EXTRACTOR: TOTAL number of unigrams extracted: {len(unigram_map)}")
 

@@ -1,7 +1,7 @@
 // right panel
 // all Top2Vec topics, lets user highlight one on plot
 
-const TOPIC_COLOURS = ['#1D9E75', '#7F77DD', '#D85A30', '#378ADD', '#BA7517', '#993556'];
+const TOPIC_COLORS = ['#1D9E75', '#7F77DD', '#D85A30', '#378ADD', '#BA7517', '#993556'];
 
 export default function TopicList({ topics, activeTopic, onSelect }) {
   return (
@@ -18,7 +18,7 @@ export default function TopicList({ topics, activeTopic, onSelect }) {
 
         {topics.map((topic, i) => {
           const isActive = activeTopic === topic.id;
-          const colour = TOPIC_COLOURS[i % TOPIC_COLOURS.length];
+          const color = TOPIC_COLORS[i % TOPIC_COLORS.length];
 
           return (
             <div
@@ -26,7 +26,7 @@ export default function TopicList({ topics, activeTopic, onSelect }) {
               className={`topic-item ${isActive ? 'active' : ''}`}
               onClick={() => onSelect(isActive ? null : topic.id)}
             >
-              <div className="topic-num" style={{ colour }}>
+              <div className="topic-num" style={{ color }}>
                 topic {topic.id}
               </div>
               <div className="topic-words">
@@ -40,4 +40,4 @@ export default function TopicList({ topics, activeTopic, onSelect }) {
   );
 }
 
-export { TOPIC_COLOURS };
+export { TOPIC_COLORS };

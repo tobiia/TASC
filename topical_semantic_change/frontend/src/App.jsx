@@ -9,8 +9,8 @@ import TopicList from './components/TopicList';
 import PlotCanvas from './components/PlotCanvas';
 import OccurrenceBar from './components/OccurrenceBar';
 
-// Colours assigned to words in order as they're added
-const WORD_COLOURS = ['#946bd6', '#d92970', '#2da5e6', '#621369', '#9ce194', '#BA7517'];
+// Colors assigned to words in order as they're added
+const WORD_COLORS = ['#946bd6', '#d92970', '#2da5e6', '#621369', '#9ce194', '#BA7517'];
 
 export default function App() {
   // words from backend
@@ -19,7 +19,7 @@ export default function App() {
   // topics
   const [topics, setTopics] = useState([]);
 
-  // { word, colour, trajectory, occurrences }
+  // { word, color, trajectory, occurrences }
   const [activeWords, setActiveWords] = useState([]);
 
   // word whose occurrences are shown in the bottom bar
@@ -35,7 +35,7 @@ export default function App() {
       .catch(err => console.error('Failed to load words:', err));
 
     fetchTopics()
-      .then(data => setTopics(data.topics))
+      .then(data => setTopics(data))
       .catch(err => console.error('Failed to load topics:', err));
   }, []);
 
@@ -56,13 +56,13 @@ export default function App() {
     }
     // else, this is a new word selected
 
-    // pick next colour
-    const usedColours = activeWords.map(w => w.colour);
-    const colour = WORD_COLOURS.find(c => !usedColours.includes(c))
-      ?? WORD_COLOURS[activeWords.length % WORD_COLOURS.length];
+    // pick next color
+    const usedColors = activeWords.map(w => w.color);
+    const color = WORD_COLORS.find(c => !usedColors.includes(c))
+      ?? WORD_COLORS[activeWords.length % WORD_COLORS.length];
 
     // add a placeholder entry straight away so the word appears selected
-    setActiveWords(prev => [...prev, { word, colour, trajectory: [], occurrences: [] }]);
+    setActiveWords(prev => [...prev, { word, color, trajectory: [], occurrences: [] }]);
     setSelectedWord(word);
 
     // fetching data to fill in placeholder
@@ -88,14 +88,14 @@ export default function App() {
   // get occurences for selected word
   const selectedOccurrences = activeWords.find(w => w.word === selectedWord)?.occurrences ?? [];
 
-  // colour lookup for WordList, { word: colour }
-  const activeColourMap = Object.fromEntries(activeWords.map(w => [w.word, w.colour]));
+  // color lookup for WordList, { word: color }
+  const activeColorMap = Object.fromEntries(activeWords.map(w => [w.word, w.color]));
 
   return (
     <div className="app">
       <header className="topbar">
         <h1>Lexical Semantic Change</h1>
-        <span>word embeddings over time · Top2Vec topic clusters</span>
+        <span>word embeddings over time · Top2Vec topic clusters · 3D PCA visualization</span>
       </header>
 
       <div className="main">
@@ -103,7 +103,7 @@ export default function App() {
         {/* Left panel — list of all words to choose from */}
         <WordList
           words={allWords}
-          activeColourMap={activeColourMap}
+          activeColorMap={activeColorMap}
           onToggle={handleWordToggle}
         />
 

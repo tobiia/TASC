@@ -1,9 +1,10 @@
 import csv
 import numpy as np
+import spacy
 from tqdm import tqdm
 import torch
 from transformers import AutoModel, AutoTokenizer
-from representation.models import TermSummary
+from .models import TermSummary
 
 from transformers.utils import logging as hf_logging
 
@@ -13,7 +14,11 @@ hf_logging.set_verbosity_error()
 
 Implements the word occurrence representation step of the
 lexical shift change workflow. Word embeddings are reconstructed
-from token embeddings using HuggingFace's word_ids() alignment.
+from token embeddings.
+
+Surface forms (e.g. "running", "ran") are input in their original
+forms, but results are grouped under the lemma so embeddings 
+across all forms are combined under one canonical term.
 
 Typical usage example:
 
@@ -40,18 +45,19 @@ class EmbeddingCreator:
     def __init__(
         self,
         corpus: dict,
-        stop_words_path: str = "stop_words_en.txt",
-        max_seq_length: int = 256,
-        batch_size: int = 64,
         model_name: str = "sentence-transformers/all-mpnet-base-v2",
         token_embedding_layer: int | None = None,
-        rng_seed=267135941556543938173580506427407010431,
+        max_seq_length: int = 256,
+        batch_size: int = 64,
+        stop_words_path: str = "stop_words_en.txt",
+        rng_seed: int = 267135941556543938173580506427407010431,
     ):
         self.corpus = corpus
-        self.stop_words_path = stop_words_path
+
+        self.token_embedding_layer = token_embedding_layer
         self.max_seq_length = max_seq_length
         self.batch_size = batch_size
-        self.token_embedding_layer = token_embedding_layer
+        self.stop_words_path = stop_words_path
 
         # to ensure alignment for certain models
         needs_prefix = any(m in model_name.lower() for m in MODELS_NEEDING_PREFIX_SPACE)
@@ -63,8 +69,13 @@ class EmbeddingCreator:
         )
         self.model.eval()
 
+        self.model_nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
+
         self.rng = np.random.default_rng(rng_seed)
         self.error_terms = set()  # set that collects any terms dropped b/c of errors
+
+    def _lemmatize_term(self, term: str):
+        return " ".join([token.lemma_ for token in self.model_nlp(term)])
 
     def _l2_normalize(self, x):
         return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
@@ -95,6 +106,7 @@ class EmbeddingCreator:
         sample = embeddings[
             self.rng.choice(embeddings.shape[0], size=n_samples, replace=False)
         ]
+        sample = sample / (np.linalg.norm(sample, axis=-1, keepdims=True) + 1e-9)
 
         # cosine similarity matrix
         sim = sample @ sample.T
@@ -127,7 +139,8 @@ class EmbeddingCreator:
         )
 
     def _encode_sentences(self, sentences: list[str]) -> tuple[np.ndarray, dict]:
-        """Encode all sentences, returning sentence embeddings and a word embedding cache.
+        """Encode all sentences, returning sentence embeddings and a word
+        embedding cache.
 
         Batches model forward passes for efficiency. Re-tokenizes each sentence
         individually to get reliable word_ids() for the cache because padding
@@ -181,6 +194,8 @@ class EmbeddingCreator:
                 )
                 sentence_cache[batch_start + i] = (words, word_embeds)
 
+        if not all_sent_embeds:
+            return np.empty((0,)), sentence_cache
         return (
             self._l2_normalize(np.concatenate(all_sent_embeds, axis=0)),
             sentence_cache,
@@ -192,21 +207,36 @@ class EmbeddingCreator:
         sentence_embeddings: np.ndarray,
         sentence_to_idx: dict,
         sentence_cache: dict,
-    ) -> dict[str, TermSummary]:
+    ) -> tuple[dict[str, TermSummary], dict[str, list[str]]]:
         """Collect contextualized word embeddings for each candidate term.
 
         Slides a window of width k over each sentence's word list to find
-        the candidate. Multi-word candidates are handled by averaging across
-        the matched span. One match per sentence.
-        """
-        results = {}
+        the candidate SURFACE form. Results are grouped under the lemma,
+        so "running", "ran", "runs" -> "run".
 
-        for candidate, sents in tqdm(
+        Multi-word candidates are handled by averaging across the matched span.
+        One match per sentence.
+
+        Returns:
+            results: {lemma: TermSummary} with word and sentence embeddings
+            lemma_sentences: {lemma: [original sentence strings]} for the API
+        """
+        # accumulator keyed by lemma to merge surface forms
+        accumulators = {}
+
+        for surface_form, sents in tqdm(
             candidates.items(), desc="***************** building word embeddings..."
         ):
-            candidate_words = candidate.split()
+            lemma = self._lemmatize_term(surface_form)
+            candidate_words = surface_form.split()
             k = len(candidate_words)
-            all_embeds, matched_sent_embeds = [], []
+
+            if lemma not in accumulators:
+                accumulators[lemma] = {
+                    "word_embeds": [],
+                    "sent_embeds": [],
+                    "sentences": [],
+                }
 
             for sent in sents:
                 idx = sentence_to_idx.get(sent)
@@ -215,26 +245,35 @@ class EmbeddingCreator:
                 words, word_embeds = sentence_cache[idx]
                 for i in range(len(words) - k + 1):
                     if words[i : i + k] == candidate_words:
-                        all_embeds.append(np.mean(word_embeds[i : i + k], axis=0))
-                        matched_sent_embeds.append(sentence_embeddings[idx])
+                        accumulators[lemma]["word_embeds"].append(
+                            np.mean(word_embeds[i : i + k], axis=0)
+                        )
+                        accumulators[lemma]["sent_embeds"].append(
+                            sentence_embeddings[idx]
+                        )
+                        accumulators[lemma]["sentences"].append(sent)
                         break
 
-            if not all_embeds:
-                self.error_terms.add(candidate)
+        # build final TermSummary objects, dropping any lemma with no matches
+        results = {}
+        lemma_sentences = {}
+        for lemma, acc in accumulators.items():
+            if not acc["word_embeds"]:
+                self.error_terms.add(lemma)
                 continue
-
-            results[candidate] = TermSummary(
-                word_embeds=self._l2_normalize(np.vstack(all_embeds)),
-                sent_embeds=np.vstack(matched_sent_embeds),
+            results[lemma] = TermSummary(
+                word_embeds=self._l2_normalize(np.vstack(acc["word_embeds"])),
+                sent_embeds=np.vstack(acc["sent_embeds"]),
             )
+            lemma_sentences[lemma] = acc["sentences"]
 
-        return results
+        return results, lemma_sentences
 
     def create_sent_embeddings(self):
         if not self.corpus:
             raise ValueError("ERROR: error with candidate extraction.")
 
-        print(f"EMBEDDING CREATOR: initial candidates: {len(self.corpus)}")
+        print(f"EMBEDDING CREATOR: initial number of words: {len(self.corpus)}")
 
         unique_sentences = list(
             dict.fromkeys(s for sents in self.corpus.values() for s in sents)
@@ -243,22 +282,33 @@ class EmbeddingCreator:
 
         sentence_embeddings, sentence_cache = self._encode_sentences(unique_sentences)
 
+        # grouping by lemma
+        accumulators: dict[str, dict] = {}
+        for surface_form, sents in self.corpus.items():
+            lemma = self._lemmatize_term(surface_form)
+            if lemma not in accumulators:
+                accumulators[lemma] = {"embeds": [], "sentences": []}
+            for s in sents:
+                if s in sentence_to_idx:
+                    accumulators[lemma]["embeds"].append(
+                        sentence_embeddings[sentence_to_idx[s]]
+                    )
+                    accumulators[lemma]["sentences"].append(s)
+
         results = {}
-        for candidate, sents in self.corpus.items():
-            embeds = [
-                sentence_embeddings[sentence_to_idx[s]]
-                for s in sents
-                if s in sentence_to_idx
-            ]
-            if not embeds:
-                self.error_terms.add(candidate)
+        lemma_sentences = {}
+        for lemma, acc in accumulators.items():
+            if not acc["embeds"]:
+                self.error_terms.add(lemma)
                 continue
-            results[candidate] = TermSummary(sent_embeds=np.vstack(embeds))
+            results[lemma] = TermSummary(sent_embeds=np.vstack(acc["embeds"]))
+            lemma_sentences[lemma] = acc["sentences"]
 
         print(
             f"EMBEDDING CREATOR: candidates after sentence embeddings: {len(results)}"
         )
-        return results, sentence_cache, self.corpus
+
+        return results, sentence_cache, lemma_sentences
 
     def create_embeddings(self):
         if not self.corpus:
@@ -273,11 +323,11 @@ class EmbeddingCreator:
 
         sentence_embeddings, sentence_cache = self._encode_sentences(unique_sentences)
 
-        term_candidates = self._build_term_embeddings(
+        term_candidates, lemma_sentences = self._build_term_embeddings(
             self.corpus, sentence_embeddings, sentence_to_idx, sentence_cache
         )
         print(
             f"EMBEDDING CREATOR: candidates after word embeddings: {len(term_candidates)}"
         )
 
-        return term_candidates, sentence_cache, self.corpus
+        return term_candidates, sentence_cache, lemma_sentences

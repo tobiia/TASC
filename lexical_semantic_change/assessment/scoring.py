@@ -1,9 +1,6 @@
-"""Assessing performance of different models, scores, and layers."""
-
 import argparse
 from itertools import product
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from utils import l2_normalize, load_gold_set, adp, prt, spearmans
@@ -17,17 +14,6 @@ hf_logging.set_verbosity_error()
 # -----------------------------------------------------------
 # ANCHOR - config
 
-parser = argparse.ArgumentParser(
-    prog="evaluate configurations for LSC",
-    description="compute Spearman correlation across model/layer/scoring-function combinations",
-)
-parser.add_argument("corpus1", help="path to first corpus")
-parser.add_argument("corpus2", help="path to second corpus")
-parser.add_argument("-g", "--gold", help="path to gold standard file", required=True)
-parser.add_argument("-m", "--models", nargs="+", help="model names", required=True)
-parser.add_argument("-l", "--label", help="optional label for output file")
-args = parser.parse_args()
-
 OUTPUT_CSV = "combo_results.csv"
 LAYERS = range(3, 13)
 
@@ -36,6 +22,17 @@ LAYERS = range(3, 13)
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        prog="evaluate configurations for LSC",
+        description="compute Spearman correlation across model/layer/scoring-function combinations",
+    )
+    parser.add_argument("corpus1", help="path to first corpus")
+    parser.add_argument("corpus2", help="path to second corpus")
+    parser.add_argument("-g", "--gold", help="path to gold standard file", required=True)
+    parser.add_argument("-m", "--models", nargs="+", help="model names", required=True)
+    parser.add_argument("-l", "--label", help="optional label for output file")
+    args = parser.parse_args()
+
     print("***************** setting up...")
     x_words, y_words = extract_common_words(args.corpus1, args.corpus2)
     x_name = Path(args.corpus1).stem

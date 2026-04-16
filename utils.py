@@ -65,7 +65,10 @@ def cosine_sim(x, y, eps: float = 1e-9):
 
 
 def prt(x, y):
-    return 1.0 / cosine_sim(x, y)
+    sim = cosine_sim(x, y)
+    if sim == 0.0:
+        return float("inf")
+    return 1.0 / sim
 
 
 def adp(x, y):

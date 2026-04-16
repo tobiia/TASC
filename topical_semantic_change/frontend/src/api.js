@@ -13,7 +13,7 @@ export async function fetchWords() {
 //   trajectory: [{ period: '2018', x, y, z }]
 //   occurrences: [{ text: '...', date: '2018-06-01' }]
 export async function fetchWord(word) {
-  const res = await axios.get(`${BASE}/word/${word}`);
+  const res = await axios.get(`${BASE}/word/${encodeURIComponent(word)}`);
   return res.data;
 }
 

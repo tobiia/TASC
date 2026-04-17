@@ -1,20 +1,29 @@
+import logging
 import numpy as np
-import os
 from .models import TermSummary
 from .embedding_creator import EmbeddingCreator
+from ..config import PROJECT_ROOT
+from ..utils import save_set_to_csv
 
-# REVIEW where to save files?
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingCache:
-    # semeval2020
-    # mini, mpnet, roberta, xllexeme, tempobert
+    """Initialize WordCache.
+
+    Args:
+        cache_domain: Name prefix for cache files
+        model_name: Huggingface name for the desired model
+        layer: Hidden layer to extract token embeddings (or None)
+    """
+
     def __init__(self, cache_domain, model_name, layer=None):
         layer_str = f"_L{layer}" if layer is not None else ""
+        # remove "/" from file name to avoid errors
         safe_name = model_name.replace("/", "_")
-        self.path = f"cache_{cache_domain}_{safe_name}{layer_str}.npz"
+        self.path = PROJECT_ROOT / f"cache_{cache_domain}_{safe_name}{layer_str}.npz"
 
-    def save_cache(self, term_candidates, sentence_cache, candidates):
+    def save_cache(self, term_candidates, sentence_cache, lemma_sentences):
 
         cand_keys = list(term_candidates.keys())
 
@@ -30,8 +39,8 @@ class EmbeddingCache:
             sentence_cache
         )
 
-        cand_dict_keys, cand_dict_values_flat, cand_dict_offsets = (
-            self._flatten_candidates(candidates)
+        ls_keys, ls_values_flat, ls_offsets = self._flatten_lemma_sentences(
+            lemma_sentences
         )
 
         self._save_common(
@@ -44,9 +53,9 @@ class EmbeddingCache:
             cache_words=cache_words,
             cache_offsets=cache_offsets,
             cache_embeds_flat=cache_embeds_flat,
-            cand_dict_keys=cand_dict_keys,
-            cand_dict_values_flat=cand_dict_values_flat,
-            cand_dict_offsets=cand_dict_offsets,
+            ls_keys=ls_keys,
+            ls_values_flat=ls_values_flat,
+            ls_offsets=ls_offsets,
         )
 
     def load_cache(self):
@@ -73,13 +82,13 @@ class EmbeddingCache:
             data["cache_embeds_flat"],
         )
 
-        candidates = self._reconstruct_candidates(
-            data["cand_dict_keys"],
-            data["cand_dict_values_flat"],
-            data["cand_dict_offsets"],
+        lemma_sentences = self._reconstruct_lemma_sentences(
+            data["ls_keys"],
+            data["ls_values_flat"],
+            data["ls_offsets"],
         )
 
-        return term_candidates, sentence_cache, candidates
+        return term_candidates, sentence_cache, lemma_sentences
 
     def _save_common(self, path, candidates, **arrays):
         np.savez_compressed(
@@ -108,7 +117,9 @@ class EmbeddingCache:
             # B (3, 768) -> start = 5, end = 8 -> sent_embeds_flat[5:8]
             sent_offsets.append(sent_offsets[-1] + len(se))
         # sent_embeds_flat (8, 768) after vstack
-        return (np.vstack(sent_embeds_flat) if sent_embeds_flat else np.empty((0,))), np.array(sent_offsets)
+        return (
+            np.vstack(sent_embeds_flat) if sent_embeds_flat else np.empty((0, 0))
+        ), np.array(sent_offsets)
 
     def _flatten_word_embeds_all(self, term_candidates, candidates):
         word_embeds_flat = []
@@ -121,7 +132,9 @@ class EmbeddingCache:
             word_embeds_flat.append(we)
             word_offsets.append(word_offsets[-1] + len(we))
 
-        return (np.vstack(word_embeds_flat) if word_embeds_flat else np.empty((0,))), np.array(word_offsets)
+        return (
+            np.vstack(word_embeds_flat) if word_embeds_flat else np.empty((0, 0))
+        ), np.array(word_offsets)
 
     # storing the embeddings for each unique sentence
     def _flatten_sentence_cache(self, sentence_cache):
@@ -140,10 +153,10 @@ class EmbeddingCache:
         return (
             np.array(cache_words, dtype=object),
             np.array(cache_offsets),
-            np.vstack(cache_embeds_flat) if cache_embeds_flat else np.empty((0,)),
+            np.vstack(cache_embeds_flat) if cache_embeds_flat else np.empty((0, 0)),
         )
 
-    def _flatten_candidates(self, candidates):
+    def _flatten_lemma_sentences(self, candidates):
         keys = list(candidates.keys())
         values_flat = []
         offsets = [0]
@@ -159,7 +172,7 @@ class EmbeddingCache:
             np.array(offsets),
         )
 
-    def _reconstruct_candidates(self, keys, values_flat, offsets):
+    def _reconstruct_lemma_sentences(self, keys, values_flat, offsets):
         # short form version of the same to reconstruct word/sent embeds
         return {
             keys[i]: list(values_flat[offsets[i] : offsets[i + 1]])
@@ -183,32 +196,78 @@ class EmbeddingCache:
         return sentence_cache
 
 
-def run_cache(
-    corpus: dict,
-    corpus_name: str,
-    model_name: str,
-    layer: int | None = None,
+def _load_or_compute(
+    cache: "EmbeddingCache", corpus: dict, model_name: str, layer, cache_domain: str
 ):
-    print(f"***************** setting up embedding data...")
-    cache = EmbeddingCache(cache_domain=corpus_name, model_name=model_name, layer=layer)
+    """Load cached embeddings or compute if not available.
 
-    if os.path.exists(cache.path):
-        print("***************** loading from cache...")
-        term_candidates, sentence_cache, orig_candidates = cache.load_cache()
+    Args:
+        cache: EmbeddingCache instance
+        corpus: dict mapping word -> list of sentences
+        model_name: Huggingface name for the desired model
+        layer: Hidden layer to extract token embeddings (or None)
+        cache_domain: Name prefix for cache files
 
-        print(f"EMBEDDING CACHE: number of initial candidates: {len(orig_candidates)}")
-        print(
-            f"EMBEDDING CACHE: number of candidates after word embeddings: {len(term_candidates)}"
+    Returns:
+        (term_candidates, sentence_cache, lemma_sentences)
+    """
+    if cache.path.exists():
+        logger.info(f"Loading {cache_domain} embeddings from cache...")
+        term_candidates, sentence_cache, lemma_sentences = cache.load_cache()
+        logger.info(
+            f"EMBEDDING CACHE ({cache_domain}): {len(lemma_sentences)} initial, {len(term_candidates)} after embeddings"
         )
     else:
-        print("***************** no cache found, computing embeddings...")
+        logger.info(f"Computing embeddings for {cache_domain}...")
         embedding_creator = EmbeddingCreator(
             corpus, model_name=model_name, token_embedding_layer=layer
         )
-        term_candidates, sentence_cache, orig_candidates = (
+        term_candidates, sentence_cache, lemma_sentences = (
             embedding_creator.create_embeddings()
         )
-        print("***************** caching...")
-        cache.save_cache(term_candidates, sentence_cache, orig_candidates)
+        if embedding_creator.error_terms:
+            err_path = PROJECT_ROOT / f"error_terms_{cache_domain}.csv"
+            logger.warning(
+                f"Saving {len(embedding_creator.error_terms)} error terms to {err_path}"
+            )
+            save_set_to_csv(embedding_creator.error_terms, err_path)
+        logger.info(f"Caching {cache_domain} embeddings...")
+        cache.save_cache(term_candidates, sentence_cache, lemma_sentences)
+    return term_candidates, sentence_cache, lemma_sentences
 
-    return term_candidates, sentence_cache, orig_candidates
+
+def run_cache(
+    x_corpus: dict,
+    y_corpus: dict,
+    cache_domain: str,
+    model_name: str,
+    layer: int | None = None,
+):
+    """Load or compute embeddings for two corpora.
+
+    Args:
+        x_corpus: dict mapping word -> list of sentences (corpus 1)
+        y_corpus: dict mapping word -> list of sentences (corpus 2)
+        cache_domain: Name prefix for cache files
+        model_name: Huggingface name for the desired model
+        layer: Hidden layer to extract token embeddings (or None)
+
+    Returns:
+        ((x_embeds, x_cache, x_sentences), (y_embeds, y_cache, y_sentences)):
+        - x_embeds, y_embeds: dicts mapping lemma -> TermSummary
+        - x_cache, y_cache: sentence cache dicts
+        - x_sentences, y_sentences: lemma -> sentences dicts
+    """
+    logger.info(f"Processing embeddings: {cache_domain}")
+
+    cache_x = EmbeddingCache(f"{cache_domain}_c1", model_name, layer)
+    cache_y = EmbeddingCache(f"{cache_domain}_c2", model_name, layer)
+
+    x_result = _load_or_compute(
+        cache_x, x_corpus, model_name, layer, f"{cache_domain}_c1"
+    )
+    y_result = _load_or_compute(
+        cache_y, y_corpus, model_name, layer, f"{cache_domain}_c2"
+    )
+
+    return x_result, y_result

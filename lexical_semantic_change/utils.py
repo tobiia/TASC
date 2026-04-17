@@ -1,9 +1,11 @@
-import os
 import csv
 import numpy as np
 import pandas as pd
+import logging
 
-"""Utility functions"""
+logger = logging.getLogger(__name__)
+
+# utility functions
 
 
 def save_set_to_csv(data_set, file_path):
@@ -12,23 +14,6 @@ def save_set_to_csv(data_set, file_path):
         writer.writerow(["term"])
         for item in sorted(data_set):
             writer.writerow([item])
-
-
-def append_metrics(file_path, threshold, label, precision, recall, f1_score):
-    file_exists = os.path.exists(file_path) and os.path.getsize(file_path) > 0
-    with open(file_path, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow(["threshold", "label", "precision", "recall", "f1_score"])
-        writer.writerow(
-            [
-                threshold,
-                label,
-                round(precision, 4),
-                round(recall, 4),
-                round(f1_score, 4),
-            ]
-        )
 
 
 def load_gold_set(path):
@@ -67,8 +52,8 @@ def cosine_sim(x, y, eps: float = 1e-9):
 def prt(x, y):
     sim = cosine_sim(x, y)
     if sim == 0.0:
-        return float("inf")
-    return 1.0 / sim
+        logger.warning("PRT: cosine similarity is exactly 0, clamping to avoid inf")
+    return 1.0 / max(sim, 1e-9)
 
 
 def adp(x, y):

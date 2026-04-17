@@ -1,4 +1,4 @@
-import csv
+import logging
 import numpy as np
 import spacy
 from tqdm import tqdm
@@ -9,6 +9,8 @@ from .models import TermSummary
 from transformers.utils import logging as hf_logging
 
 hf_logging.set_verbosity_error()
+
+logger = logging.getLogger(__name__)
 
 """Pipeline for creating token-level contextual word embeddings
 
@@ -27,14 +29,6 @@ Typical usage example:
 """
 
 
-def save_set_to_csv(data_set, file_path):
-    with open(file_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["term"])
-        for item in sorted(data_set):
-            writer.writerow([item])
-
-
 MODELS_NEEDING_PREFIX_SPACE = {
     "roberta",
     "xl-lexeme",
@@ -49,27 +43,51 @@ class EmbeddingCreator:
         token_embedding_layer: int | None = None,
         max_seq_length: int = 256,
         batch_size: int = 64,
-        stop_words_path: str = "stop_words_en.txt",
         rng_seed: int = 267135941556543938173580506427407010431,
     ):
+        """Initialize EmbeddingCreator for computing contextual word embeddings.
+
+        Args:
+            corpus: dict mapping word -> list of sentences
+            model_name: Huggingface name for the desired model
+            token_embedding_layer: Which hidden layer to extract (None = last layer)
+            max_seq_length: Max tokens per sentence
+            batch_size: Batch size for inference
+            rng_seed: Random seed for reproducibility
+        """
+        if not corpus:
+            raise ValueError("corpus cannot be empty")
+
         self.corpus = corpus
+        logger.info(f"Initializing with {len(corpus)} words")
 
         self.token_embedding_layer = token_embedding_layer
         self.max_seq_length = max_seq_length
         self.batch_size = batch_size
-        self.stop_words_path = stop_words_path
 
-        # to ensure alignment for certain models
-        needs_prefix = any(m in model_name.lower() for m in MODELS_NEEDING_PREFIX_SPACE)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, add_prefix_space=needs_prefix
-        )
-        self.model = AutoModel.from_pretrained(
-            model_name, output_hidden_states=token_embedding_layer is not None
-        )
-        self.model.eval()
+        try:
+            logger.info(f"Loading tokenizer: {model_name}")
+            needs_prefix = any(
+                m in model_name.lower() for m in MODELS_NEEDING_PREFIX_SPACE
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name, add_prefix_space=needs_prefix
+            )
+            logger.info(f"Loading model: {model_name}")
+            self.model = AutoModel.from_pretrained(
+                model_name, output_hidden_states=token_embedding_layer is not None
+            )
+            self.model.eval()
+            logger.info("Model loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load model {model_name}: {e}")
+            raise
 
-        self.model_nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
+        try:
+            self.model_nlp = spacy.load("en_core_web_sm", disable=["ner", "parser"])
+        except Exception as e:
+            logger.error(f"Failed to load spaCy model: {e}")
+            raise
 
         self.rng = np.random.default_rng(rng_seed)
         self.error_terms = set()  # set that collects any terms dropped b/c of errors
@@ -93,8 +111,7 @@ class EmbeddingCreator:
         over randomly sampled embeddings.
 
         Returns:
-            float
-                Anisotropy baseline (mean cosine similarity of random pairs)
+            float: Anisotropy baseline (mean cosine similarity of random pairs)
         """
         embeddings = np.asarray(embeddings)
 
@@ -168,6 +185,7 @@ class EmbeddingCreator:
             with torch.no_grad():
                 output = self.model(**encoded)
 
+            # sentence embeddings always use last_hidden_state regardless of token_embedding_layer
             all_sent_embeds.append(
                 self._mean_pooling(output, encoded["attention_mask"]).cpu().numpy()
             )
@@ -269,65 +287,39 @@ class EmbeddingCreator:
 
         return results, lemma_sentences
 
-    def create_sent_embeddings(self):
-        if not self.corpus:
-            raise ValueError("ERROR: error with candidate extraction.")
-
-        print(f"EMBEDDING CREATOR: initial number of words: {len(self.corpus)}")
-
-        unique_sentences = list(
-            dict.fromkeys(s for sents in self.corpus.values() for s in sents)
-        )
-        sentence_to_idx = {s: i for i, s in enumerate(unique_sentences)}
-
-        sentence_embeddings, sentence_cache = self._encode_sentences(unique_sentences)
-
-        # grouping by lemma
-        accumulators: dict[str, dict] = {}
-        for surface_form, sents in self.corpus.items():
-            lemma = self._lemmatize_term(surface_form)
-            if lemma not in accumulators:
-                accumulators[lemma] = {"embeds": [], "sentences": []}
-            for s in sents:
-                if s in sentence_to_idx:
-                    accumulators[lemma]["embeds"].append(
-                        sentence_embeddings[sentence_to_idx[s]]
-                    )
-                    accumulators[lemma]["sentences"].append(s)
-
-        results = {}
-        lemma_sentences = {}
-        for lemma, acc in accumulators.items():
-            if not acc["embeds"]:
-                self.error_terms.add(lemma)
-                continue
-            results[lemma] = TermSummary(sent_embeds=np.vstack(acc["embeds"]))
-            lemma_sentences[lemma] = acc["sentences"]
-
-        print(
-            f"EMBEDDING CREATOR: candidates after sentence embeddings: {len(results)}"
-        )
-
-        return results, sentence_cache, lemma_sentences
-
     def create_embeddings(self):
-        if not self.corpus:
-            raise ValueError("ERROR: error with candidate extraction.")
+        """Compute embeddings for all words in corpus.
 
-        print(f"EMBEDDING CREATOR: initial candidates: {len(self.corpus)}")
+        Returns:
+            (term_candidates, sentence_cache, lemma_sentences):
+            - term_candidates: dict mapping lemma -> TermSummary
+            - sentence_cache: dict mapping sentence_idx -> (words, embeddings)
+            - lemma_sentences: dict mapping lemma -> list of sentence strings
+        """
+        if not self.corpus:
+            raise ValueError("Corpus is empty")
+
+        logger.info(f"Initial candidates: {len(self.corpus)}")
 
         unique_sentences = list(
             dict.fromkeys(s for sents in self.corpus.values() for s in sents)
         )
+        logger.info(f"Unique sentences: {len(unique_sentences)}")
+
         sentence_to_idx = {s: i for i, s in enumerate(unique_sentences)}
 
+        logger.info("Encoding sentences...")
         sentence_embeddings, sentence_cache = self._encode_sentences(unique_sentences)
 
+        logger.info("Building word embeddings...")
         term_candidates, lemma_sentences = self._build_term_embeddings(
             self.corpus, sentence_embeddings, sentence_to_idx, sentence_cache
         )
-        print(
-            f"EMBEDDING CREATOR: candidates after word embeddings: {len(term_candidates)}"
-        )
+        logger.info(f"Terms after word embedding creation: {len(term_candidates)}")
+
+        if self.error_terms:
+            logger.warning(
+                f"{len(self.error_terms)} terms had errors and weren't embedded"
+            )
 
         return term_candidates, sentence_cache, lemma_sentences

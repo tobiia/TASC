@@ -4,7 +4,8 @@
 // remove if things aren't working???
 
 import Plotly from 'plotly.js-dist-min';
-import createPlotlyComponent from 'react-plotly.js/factory';
+import * as factoryNS from 'react-plotly.js/factory';
 
-const Plot = createPlotlyComponent(Plotly);
+// factory.js uses __esModule exports; .default is the actual function
+const Plot = factoryNS.default(Plotly);
 export default Plot;

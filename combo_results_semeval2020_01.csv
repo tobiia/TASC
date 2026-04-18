@@ -1,0 +1,7 @@
+model,layer,fn,rho
+sentence-transformers/all-MiniLM-L6-v2,6,adp,0.262730456463713
+sentence-transformers/all-MiniLM-L6-v2,6,prt,0.24233802031219737
+sentence-transformers/all-mpnet-base-v2,6,adp,0.38295098121741566
+sentence-transformers/all-mpnet-base-v2,6,prt,0.3824767385162176
+sentence-transformers/all-mpnet-base-v2,7,adp,0.3840180272951112
+sentence-transformers/all-mpnet-base-v2,7,prt,0.4220760040662538

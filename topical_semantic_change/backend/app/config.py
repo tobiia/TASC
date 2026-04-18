@@ -15,4 +15,9 @@ DATA_DIR = BACKEND / "data"
 # TXT: one term per line.
 # When set, extraction is done via fast string matching instead of full NLP.
 # None = extract all words (takes an extremely long time for long corpora)
-TERMS_FILE: Path | None = None
+TERMS_FILE: Path | None = DATA_DIR / "sample_small" / "truth.csv"
+
+CORPUS1 = str(DATA_DIR / "sample_small" / "1860s")
+CORPUS2 = str(DATA_DIR / "sample_small" / "1950s")
+MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+TOP2VEC_MODEL = "all-mpnet-base-v2"

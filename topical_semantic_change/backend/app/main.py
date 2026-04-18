@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
         logger.info(f"Loaded {len(word_list)} words, {len(all_sentences)} sentences")
 
         logger.info("Training Top2Vec model...")
-        top2vec_model = train_top2vec(all_sentences, MODEL_NAME)
+        top2vec_model = train_top2vec(all_sentences)
         logger.info(
             f"Trained Top2Vec model with {top2vec_model.get_num_topics()} topics"
         )
@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-origins = ["http://localhost:5173", "localhost:5173"]
+origins = ["http://localhost:5173"]
 
 app.add_middleware(
     CORSMiddleware,

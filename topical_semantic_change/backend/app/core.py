@@ -5,19 +5,18 @@ from sklearn.decomposition import PCA
 
 from lexical_semantic_change.extraction.word_cache import run_cache as run_word_cache
 from lexical_semantic_change.representation.embed_cache import run_cache
-from .config import DATA_DIR, TERMS_FILE
+from .config import DATA_DIR, TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME
 
-CORPUS1 = str(DATA_DIR / "sample" / "corpus1")
-CORPUS2 = str(DATA_DIR / "sample" / "corpus2")
-CORPUS1_NAME = Path(CORPUS1).stem  # "corpus1"
-CORPUS2_NAME = Path(CORPUS2).stem  # "corpus2"
-MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+CORPUS1_NAME = Path(CORPUS1).stem  # "1860s"
+CORPUS2_NAME = Path(CORPUS2).stem  # "1950s"
 
 
 def _load_terms(path: Path):
     """Load terms from a CSV (looks for 'lemma' column, falls back to first column) or TXT file."""
     if path.suffix.lower() == ".csv":
-        df = pd.read_csv(path)
+        first_line = path.read_text(encoding="utf-8").splitlines()[0]
+        sep = "\t" if "\t" in first_line else ","
+        df = pd.read_csv(path, sep=sep)
         col = "lemma" if "lemma" in df.columns else df.columns[0]
         return df[col].dropna().str.lower().tolist()
     else:
@@ -34,7 +33,7 @@ def _validate_corpus_paths():
         if not Path(path).exists():
             raise FileNotFoundError(
                 f"{name} path does not exist: {path}\n"
-                f"Expected corpus files at: {DATA_DIR}/sample/corpus1/*.txt and corpus2/*.txt"
+                f"Expected corpus files at: {DATA_DIR}/sample_small/1860s/*.txt and 1950s/*.txt"
             )
 
 
@@ -116,27 +115,14 @@ def load_data():
 
 
 def fit_pca(word_means, extra_vecs=None):
-    """Fit 3-component PCA on word mean embeddings, optionally including extra vectors
-    (e.g. Top2Vec topic vectors) so words and topics share one coordinate system.
-
-    Args:
-        word_means: dict of word -> (embed_c1, embed_c2) tuples
-        extra_vecs: optional array of additional vectors to include in PCA fit
-
-    Returns:
-        pca: Fitted PCA object with n_components=3
-    """
-    if not word_means:
-        raise ValueError("word_means is empty, cannot fit PCA")
-
-    vecs = [v for x_mean, y_mean in word_means.values() for v in (x_mean, y_mean)]
-
+    # Use per-word mean across both time points so words and topics
+    # are represented at the same granularity when fitting PCA.
+    vecs = [(x_mean + y_mean) / 2 for x_mean, y_mean in word_means.values()]
     if extra_vecs is not None and len(extra_vecs):
         vecs.extend(list(extra_vecs))
 
     if not vecs:
         raise ValueError("No vectors available for PCA fitting")
-
     try:
         pca = PCA(n_components=3)
         pca.fit(np.vstack(vecs))

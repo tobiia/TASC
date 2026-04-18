@@ -1,10 +1,11 @@
 import logging
 from top2vec import Top2Vec
+from .config import TOP2VEC_MODEL
 
 logger = logging.getLogger(__name__)
 
 
-def train_top2vec(documents, model_name):
+def train_top2vec(documents):
     """Train a Top2Vec model on documents.
 
     Args:
@@ -19,7 +20,12 @@ def train_top2vec(documents, model_name):
 
     try:
         logger.info(f"Training Top2Vec with {len(documents)} documents...")
-        model = Top2Vec(documents, embedding_model=model_name, speed="learn")
+        model = Top2Vec(
+            documents,
+            contextual_top2vec=True,
+            embedding_model=TOP2VEC_MODEL,
+            speed="learn",
+        )
         logger.info(f"Top2Vec trained successfully")
         return model
     except Exception as e:

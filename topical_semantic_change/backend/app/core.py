@@ -5,7 +5,7 @@ from sklearn.decomposition import PCA
 
 from lexical_semantic_change.extraction.word_cache import run_cache as run_word_cache
 from lexical_semantic_change.representation.embed_cache import run_cache
-from .config import DATA_DIR, TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME
+from .config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME
 
 CORPUS1_NAME = Path(CORPUS1).stem  # "1860s"
 CORPUS2_NAME = Path(CORPUS2).stem  # "1950s"
@@ -33,7 +33,7 @@ def _validate_corpus_paths():
         if not Path(path).exists():
             raise FileNotFoundError(
                 f"{name} path does not exist: {path}\n"
-                f"Expected corpus files at: {DATA_DIR}/sample_small/1860s/*.txt and 1950s/*.txt"
+                f"Expected corpus files at: {CORPUS1}/*.txt and {CORPUS2}/*.txt"
             )
 
 
@@ -48,6 +48,7 @@ def load_data():
     """
     _validate_corpus_paths()
 
+    # REVIEW - should eventually be optional
     terms: list[str] | None = None
     if TERMS_FILE is not None:
         terms_path = Path(TERMS_FILE)
@@ -69,8 +70,9 @@ def load_data():
         )
 
     try:
+        # REVIEW - should remove layer specification
         (x_embeds, _, x_lemma_sentences), (y_embeds, _, y_lemma_sentences) = run_cache(
-            x_words, y_words, f"{CORPUS1_NAME}_{CORPUS2_NAME}", MODEL_NAME, layer=5
+            x_words, y_words, f"{CORPUS1_NAME}_{CORPUS2_NAME}", MODEL_NAME, layer=11
         )
     except Exception as e:
         raise RuntimeError(f"Failed to compute embeddings: {e}") from e
@@ -98,11 +100,11 @@ def load_data():
     }
 
     all_sentences = list(
-        {
+        dict.fromkeys(
             s
             for w in words
             for s in x_lemma_sentences.get(w, []) + y_lemma_sentences.get(w, [])
-        }
+        )
     )
 
     if not all_sentences:
@@ -118,6 +120,7 @@ def fit_pca(word_means, extra_vecs=None):
     # Use per-word mean across both time points so words and topics
     # are represented at the same granularity when fitting PCA.
     vecs = [(x_mean + y_mean) / 2 for x_mean, y_mean in word_means.values()]
+
     if extra_vecs is not None and len(extra_vecs):
         vecs.extend(list(extra_vecs))
 

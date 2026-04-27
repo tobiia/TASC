@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------
 # ANCHOR - config
 
-LAYERS = range(6, 8)
+LAYERS = [None]
 
 # ----------------------------------------------------------------
 # ANCHOR - main()
@@ -54,7 +54,7 @@ def main():
         raise FileNotFoundError(f"input words not found: {args.words}")
 
     output_path = (
-        PROJECT_ROOT / f"combo_results{'_' + args.label if args.label else ''}.csv"
+        PROJECT_ROOT / f"eval_results{'_' + args.label if args.label else ''}.csv"
     )
 
     logger.info("Setting up...")

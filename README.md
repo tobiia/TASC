@@ -108,7 +108,7 @@ python -m lexical_semantic_change.assessment.scoring \
   --models sentence-transformers/all-mpnet-base-v2 pierluigic/xl-lexeme
 ```
 
-**Output**: `combo_results.csv` containing Spearman correlations for each model/layer combination
+**Output**: `eval_results.csv` containing Spearman correlations for each model/layer combination
 
 **Supported Models**:
 - `sentence-transformers/all-mpnet-base-v2` (Multilingual, 768-dim)

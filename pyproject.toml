@@ -28,7 +28,9 @@ dependencies = [
 dev = ["pytest", "black", "ruff"]
 
 [project.scripts]
-scoring = "lexical_semantic_change.assessment.scoring:main"
+lsc-score = "lexical_semantic_change.assessment.scoring:main"
+lsc-run = "lexical_semantic_change.main:main"
+tsc-dev = "topical_semantic_change.dev:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["lexical_semantic_change", "topical_semantic_change"]

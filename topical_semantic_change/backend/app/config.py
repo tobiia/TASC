@@ -4,19 +4,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 SRC_DIR = PROJECT_ROOT / "topical_semantic_change"
 
+CACHE_DIR = PROJECT_ROOT / "cache"
+
 BACKEND = SRC_DIR / "backend"
 
 FRONTEND = SRC_DIR / "frontend"
 
 DATA_DIR = BACKEND / "data"
 
+# ANCHOR - where to set paths for app data
+
 # Optional: path to a CSV or TXT file of terms to search for.
 # CSV: must have a "lemma" column (or terms are read from the first column).
 # TXT: one term per line.
 # When set, extraction is done via fast string matching instead of full NLP.
 # None = extract all words (takes an extremely long time for long corpora)
-TERMS_FILE: Path | None = DATA_DIR / "sample_small" / "truth.csv"
-
+TERMS_FILE = str(DATA_DIR / "sample_small" / "truth.csv")
 CORPUS1 = str(DATA_DIR / "sample_small" / "1860s")
 CORPUS2 = str(DATA_DIR / "sample_small" / "1950s")
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"

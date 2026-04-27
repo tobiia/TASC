@@ -2,7 +2,7 @@ import logging
 import numpy as np
 
 from .word_extractor import WordExtractor
-from ..config import PROJECT_ROOT
+from ..config import CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ class WordCache:
             cache_domain: Name prefix for cache files so
                 the cache knows which to save to and load
         """
-        self.path = PROJECT_ROOT / f"cache_{cache_domain}_words.npz"
+        self.path = CACHE_DIR / f"{cache_domain}_words.npz"
 
     def exists(self) -> bool:
         return self.path.exists()

@@ -8,6 +8,8 @@ MODELS_DIR = PROJECT_ROOT / "models"
 
 CORPUS_DIR = PROJECT_ROOT / "corpus"
 
+CACHE_DIR = PROJECT_ROOT / "cache"
+
 EXTRACT_DIR = SRC_DIR / "extraction"
 
 REP_DIR = SRC_DIR / "representation"

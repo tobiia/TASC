@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------
 # ANCHOR - config
 
-LAYER = 12
+LAYER = None
 
 # ----------------------------------------------------------------
 # ANCHOR - main()
@@ -39,7 +39,10 @@ def main():
         required=True,
     )
     parser.add_argument(
-        "-m", "--model", help="HuggingFace model name", default="pierluigic/xl-lexeme"
+        "-m",
+        "--model",
+        help="HuggingFace model name",
+        default="sentence-transformers/all-mpnet-base-v2",
     )
     parser.add_argument("-l", "--label", help="optional label for output file")
     args = parser.parse_args()

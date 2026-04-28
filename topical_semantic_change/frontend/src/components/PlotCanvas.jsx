@@ -3,20 +3,29 @@
 import { useMemo } from 'react';
 import Plot from '../plotly';
 import { TOPIC_COLORS } from './TopicList';
-
 const EARLY_COLOR = '#378ADD';  // corpus1 / older period
 const LATE_COLOR = '#D85A30';  // corpus2 / newer period
 
-export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicClick }) {
+export default function PlotCanvas({ activeWords, topics, documents, activeTopics, onTopicClick }) {
   // activeWords: array of { word, color, trajectory: [{ x, y, z, period }] }
-  // topics:      array of { id, words, x, y, z, radius }
+  // documents:   array of { x, y, z, topic, period, text }
 
-  // Derive period names from the first active word that has data
+  // Derive period names from active word trajectories, falling back to documents
   const [earlyPeriod, latePeriod] = useMemo(() => {
     const traj = activeWords.find(w => w.trajectory?.length >= 2)?.trajectory;
-    if (!traj) return [null, null];
-    return [traj[0].period, traj[traj.length - 1].period];
-  }, [activeWords]);
+    if (traj) return [traj[0].period, traj[traj.length - 1].period];
+    if (documents?.length > 0) {
+      const seen = [...new Set(documents.map(d => d.period).filter(Boolean))].sort();
+      if (seen.length >= 2) return [seen[0], seen[1]];
+      if (seen.length === 1) return [seen[0], seen[0]];
+    }
+    return [null, null];
+  }, [activeWords, documents]);
+
+  const topicColorMap = useMemo(() =>
+    Object.fromEntries(topics.map((t, i) => [t.id, TOPIC_COLORS[i % TOPIC_COLORS.length]])),
+    [topics]
+  );
 
   const traces = useMemo(() => {
     const result = [];
@@ -41,30 +50,51 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
       });
     }
 
-    // topic spheres (markers) at centroids
-    if (topics.length > 0) {
-      result.push({
+    // document scatter — points colored by corpus period, dimmed when a different topic is active
+    if (documents?.length > 0) {
+      const docTrace = (docs, opacity, size, showlegend) => ({
         type: 'scatter3d',
-        mode: 'markers+text',
-        name: 'topics',
-        x: topics.map(t => t.x),
-        y: topics.map(t => t.y),
-        z: topics.map(t => t.z),
-        text: topics.map(t => `topic ${t.id}`),
-        textposition: 'top center',
-        textfont: { size: 12, color: '#333' },
+        mode: 'markers',
+        name: 'documents',
+        x: docs.map(d => d.x),
+        y: docs.map(d => d.y),
+        z: docs.map(d => d.z),
         marker: {
-          size: topics.map(t => Math.max(6, t.radius * 15)),
-          color: topics.map((_, i) => TOPIC_COLORS[i % TOPIC_COLORS.length]),
-          opacity: 0.75,
-          line: {
-            width: topics.map(t => t.id === activeTopic ? 3 : 0),
-            color: topics.map((_, i) => TOPIC_COLORS[i % TOPIC_COLORS.length]),
-          },
+          color: docs.map(d =>
+            d.period === earlyPeriod ? EARLY_COLOR :
+            d.period === latePeriod  ? LATE_COLOR  : '#888888'
+          ),
+          size,
+          opacity,
+          line: { width: 0 },
         },
-        customdata: topics.map(t => ({ type: 'topic', id: t.id })),
-        hovertemplate: '<b>Topic %{customdata.id}</b><extra></extra>',
+        customdata: docs.map(d => ({ type: 'topic', id: d.topic })),
+        hovertemplate: 'Topic %{customdata.id}<extra></extra>',
+        showlegend,
       });
+
+      if (activeTopics.size > 0) {
+        const rest = documents.filter(d => !activeTopics.has(d.topic));
+        if (rest.length > 0) result.push(docTrace(rest, 0.1, 3, false));
+        for (const topicId of activeTopics) {
+          const color = topicColorMap[topicId] ?? '#888';
+          const topicDocs = documents.filter(d => d.topic === topicId);
+          if (topicDocs.length === 0) continue;
+          result.push({
+            type: 'scatter3d', mode: 'markers',
+            name: `topic ${topicId}`,
+            x: topicDocs.map(d => d.x),
+            y: topicDocs.map(d => d.y),
+            z: topicDocs.map(d => d.z),
+            marker: { color, size: 5, opacity: 0.85, line: { width: 0 } },
+            customdata: topicDocs.map(d => ({ type: 'topic', id: d.topic })),
+            hovertemplate: 'Topic %{customdata.id}<extra></extra>',
+            showlegend: false,
+          });
+        }
+      } else {
+        result.push(docTrace(documents, 0.4, 4, false));
+      }
     }
 
     // WORD TRAJECTORIES (lines + markers through time)
@@ -112,9 +142,9 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
     });
 
     return result;
-  }, [activeWords, topics, activeTopic, earlyPeriod, latePeriod]);
+  }, [activeWords, documents, activeTopics, topicColorMap, earlyPeriod, latePeriod]);
 
-  const hasData = activeWords.length > 0 || topics.length > 0;
+  const hasData = activeWords.length > 0 || documents?.length > 0;
 
   if (!hasData) {
     return (
@@ -185,7 +215,7 @@ export default function PlotCanvas({ activeWords, topics, activeTopic, onTopicCl
         onClick={(e) => {
           if (!e.points.length) return;
           const pt = e.points[0];
-          if (pt.customdata?.type === 'topic') {
+          if (pt.customdata?.type === 'topic' && pt.customdata.id !== -1) {
             onTopicClick(pt.customdata.id);
           }
         }}

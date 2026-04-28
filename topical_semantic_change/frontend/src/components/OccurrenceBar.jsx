@@ -20,17 +20,12 @@ export default function OccurrenceBar({ word, occurrences }) {
           <div className="empty-state">No occurrences found for "{word}"</div>
         )}
 
-        {occurrences.map((occ, i) => {
-          // occ = { text: "xxxxx", date: "2026" }
-          const year = occ.date ? occ.date.slice(0, 4) : '';
-
-          return (
-            <div key={i} className="occ-chip" title={occ.text}>
-              {year && <span className="occ-date">{year}</span>}
-              {occ.text}
-            </div>
-          );
-        })}
+        {occurrences.map((occ, i) => (
+          <div key={i} className="occ-chip" title={occ.text}>
+            {occ.date && <span className="occ-date">{occ.date}</span>}
+            {occ.text}
+          </div>
+        ))}
       </div>
     </div>
   );

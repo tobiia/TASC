@@ -2,25 +2,54 @@ import axios from 'axios';
 
 const BASE = '/api';
 
-// Fetch the list of all tracked words
+function apiError(label, err) {
+  const detail = err?.response?.data?.detail ?? err?.message ?? String(err);
+  return new Error(`${label}: ${detail}`);
+}
+
+// Returns { status: 'ready' | 'initializing' | 'error', error?, words? }
+export async function fetchHealth() {
+  try {
+    const res = await axios.get(`${BASE}/health`);
+    return res.data;
+  } catch (err) {
+    // Network error or backend not running — treat as not-yet-ready
+    return { status: 'unavailable', error: err?.message ?? String(err) };
+  }
+}
+
 export async function fetchWords() {
-  const res = await axios.get(`${BASE}/words`);
-  return res.data.words; // string[]
+  try {
+    const res = await axios.get(`${BASE}/words`);
+    return res.data.words;
+  } catch (err) {
+    throw apiError('Failed to load words', err);
+  }
 }
 
-// Fetch trajectory + occurrences for a single word
-// Returns:
-//   trajectory: [{ period: '2018', x, y, z }]
-//   occurrences: [{ text: '...', date: '2018-06-01' }]
 export async function fetchWord(word) {
-  const res = await axios.get(`${BASE}/word/${encodeURIComponent(word)}`);
-  return res.data;
+  try {
+    const res = await axios.get(`${BASE}/word/${encodeURIComponent(word)}`);
+    return res.data;
+  } catch (err) {
+    throw apiError(`Failed to load word "${word}"`, err);
+  }
 }
 
-// Fetch all topic clusters
-// Returns:
-//   topics: [{ id, words: string[], x, y, z, radius }]
 export async function fetchTopics() {
-  const res = await axios.get(`${BASE}/topics`);
-  return res.data.topics;
+  try {
+    const res = await axios.get(`${BASE}/topics`);
+    return res.data.topics;
+  } catch (err) {
+    throw apiError('Failed to load topics', err);
+  }
+}
+
+export async function fetchDocuments() {
+  try {
+    const res = await axios.get(`${BASE}/documents`);
+    return res.data.documents;
+  } catch (err) {
+    throw apiError('Failed to load documents', err);
+  }
 }

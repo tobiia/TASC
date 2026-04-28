@@ -2,15 +2,41 @@
 // Root component — owns all state, fetches data, passes props down.
 // Layout: left panel (words) | centre (plot + occurrences) | right panel (topics)
 
-import { useState, useEffect } from 'react';
-import { fetchWords, fetchWord, fetchTopics } from './api';
+import { useState, useEffect, useRef, Component } from 'react';
+import { fetchWords, fetchWord, fetchTopics, fetchDocuments, fetchHealth } from './api';
 import WordList from './components/WordList';
 import TopicList from './components/TopicList';
 import PlotCanvas from './components/PlotCanvas';
 import OccurrenceBar from './components/OccurrenceBar';
 
 // Colors assigned to words in order as they're added
-const WORD_COLORS = ['#946bd6', '#d92970', '#2da5e6', '#621369', '#9ce194', '#BA7517'];
+const WORD_COLORS = [
+  '#946bd6', '#d92970', '#2da5e6', '#621369', '#9ce194', '#BA7517',
+  '#E63946', '#2EC4B6', '#F77F00', '#4CC9F0', '#06A77D', '#E76F51',
+];
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="plot-area">
+          <div className="plot-placeholder">
+            <div className="plot-placeholder-big">Something went wrong</div>
+            <div className="plot-placeholder-small">{String(this.state.error)}</div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   // words from backend
@@ -19,24 +45,73 @@ export default function App() {
   // topics
   const [topics, setTopics] = useState([]);
 
+  // document vectors for 3D scatter
+  const [documents, setDocuments] = useState([]);
+
   // { word, color, trajectory, occurrences }
   const [activeWords, setActiveWords] = useState([]);
 
   // word whose occurrences are shown in the bottom bar
   const [selectedWord, setSelectedWord] = useState(null);
 
-  // topic currently highlighted or none/null
-  const [activeTopic, setActiveTopic] = useState(null);
+  // set of highlighted topic IDs
+  const [activeTopics, setActiveTopics] = useState(new Set());
 
-  // load words + topics
+  // 'polling' while waiting for backend | 'loading' while fetching data | 'ready' | 'error'
+  const [phase, setPhase] = useState('polling');
+  const [statusMessage, setStatusMessage] = useState('Waiting for backend…');
+  const [loadError, setLoadError] = useState(null);
+  const pollTimer = useRef(null);
+
   useEffect(() => {
-    fetchWords()
-      .then(words => setAllWords(words))
-      .catch(err => console.error('Failed to load words:', err));
+    let cancelled = false;
 
-    fetchTopics()
-      .then(data => setTopics(data))
-      .catch(err => console.error('Failed to load topics:', err));
+    async function loadData() {
+      try {
+        await Promise.all([
+          fetchWords().then(words => { if (!cancelled) setAllWords(words); }),
+          fetchTopics().then(data => { if (!cancelled) setTopics(data); }),
+          fetchDocuments().then(data => { if (!cancelled) setDocuments(data); }),
+        ]);
+        if (!cancelled) setPhase('ready');
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err?.message ?? String(err));
+          setPhase('error');
+        }
+      }
+    }
+
+    async function pollHealth() {
+      if (cancelled) return;
+      const health = await fetchHealth();
+
+      if (cancelled) return;
+
+      if (health.status === 'ready') {
+        setPhase('loading');
+        setStatusMessage('Loading data…');
+        loadData();
+      } else if (health.status === 'error') {
+        setLoadError(health.error ?? 'Backend failed to initialize');
+        setPhase('error');
+      } else {
+        // 'initializing' or 'unavailable' — keep polling
+        setStatusMessage(
+          health.status === 'unavailable'
+            ? 'Waiting for backend…'
+            : 'Backend is initializing (this may take a few minutes)…'
+        );
+        pollTimer.current = setTimeout(pollHealth, 3000);
+      }
+    }
+
+    pollHealth();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(pollTimer.current);
+    };
   }, []);
 
   // user clicks on word in WORD LIST
@@ -77,12 +152,19 @@ export default function App() {
       );
     } catch (err) {
       console.error(`Failed to load data for "${word}":`, err);
+      // remove the placeholder so the word doesn't appear stuck as selected
+      setActiveWords(prev => prev.filter(w => w.word !== word));
+      setSelectedWord(prev => prev === word ? null : prev);
     }
   }
 
   // toggle a topic highlight on/off
   function handleTopicClick(id) {
-    setActiveTopic(prev => prev === id ? null : id);
+    setActiveTopics(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   }
 
   // get occurences for selected word
@@ -98,6 +180,20 @@ export default function App() {
         <span>word embeddings over time · Top2Vec topic clusters · 3D PCA visualization</span>
       </header>
 
+      {(phase === 'polling' || phase === 'loading') && (
+        <div className="loading-overlay">
+          <div className="loading-spinner" />
+          <span>{statusMessage}</span>
+        </div>
+      )}
+
+      {phase === 'error' && (
+        <div className="loading-overlay">
+          <div className="plot-placeholder-big">Failed to load data</div>
+          <div className="plot-placeholder-small">{loadError}</div>
+        </div>
+      )}
+
       <div className="main">
 
         {/* Left panel — list of all words to choose from */}
@@ -109,12 +205,15 @@ export default function App() {
 
         {/* Centre — the plot on top, occurrences bar on the bottom */}
         <div className="centre">
-          <PlotCanvas
-            activeWords={activeWords}
-            topics={topics}
-            activeTopic={activeTopic}
-            onTopicClick={handleTopicClick}
-          />
+          <ErrorBoundary>
+            <PlotCanvas
+              activeWords={activeWords}
+              topics={topics}
+              documents={documents}
+              activeTopics={activeTopics}
+              onTopicClick={handleTopicClick}
+            />
+          </ErrorBoundary>
           <OccurrenceBar
             word={selectedWord}
             occurrences={selectedOccurrences}
@@ -124,7 +223,7 @@ export default function App() {
         {/* Right panel — topic list */}
         <TopicList
           topics={topics}
-          activeTopic={activeTopic}
+          activeTopics={activeTopics}
           onSelect={handleTopicClick}
         />
 

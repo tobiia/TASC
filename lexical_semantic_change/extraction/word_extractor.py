@@ -15,7 +15,7 @@ from ..config import EXTRACT_DIR
 logger = logging.getLogger(__name__)
 
 # parts of speech templates
-pos_tag_patterns = ["PROPN", "NOUN", "ADJ", "VERB", "ADV"]
+pos_tag_patterns = ["PROPN", "NOUN", "ADJ", "VERB"]
 
 # setting up punctuation lists to check, punc_without does not contain hyphens and apostrophes as they can be part of phrases. punc_all is needed to check if there is a hyphen at the beginning or end of a phrase
 punc_without = set(string.punctuation)
@@ -85,6 +85,38 @@ class WordExtractor:
             )
             self.stop_words = set()
 
+    def _file_chunks(self, filepath: Path):
+        """Yield cleaned paragraph-level chunks without loading the whole file.
+
+        Accumulates lines until a blank line is hit, then yields the cleaned
+        chunk. Only one paragraph is held in memory at a time, so large files
+        are streamed rather than read whole.
+        """
+        current: list[str] = []
+        with open(filepath, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    current.append(line)
+                elif current:
+                    chunk = (
+                        " ".join("".join(current).split())
+                        .replace(" -", "-")
+                        .replace("- ", "-")
+                        .replace(" '", "'")
+                    )
+                    if chunk:
+                        yield chunk
+                    current = []
+        if current:
+            chunk = (
+                " ".join("".join(current).split())
+                .replace(" -", "-")
+                .replace("- ", "-")
+                .replace(" '", "'")
+            )
+            if chunk:
+                yield chunk
+
     def unigram_extraction(self, max_sents_per_word=200) -> dict[str, list[str]]:
         """Extract unigram candidates (single tokens) from corpus.
 
@@ -121,40 +153,29 @@ class WordExtractor:
 
         logger.info(f"Extracting from {len(file_list)} corpus files")
 
-        # stream lines to avoid oom
         for filepath in file_list:
             logger.debug(f"Processing {filepath.name}...")
-            with open(filepath, encoding="utf-8") as f:
-                # generator expr, streaming
-                lines = (
-                    " ".join(line.split())  # collapses all whitespace including tabs
-                    .replace(" -", "-")
-                    .replace("- ", "-")
-                    .replace(" '", "'")
-                    for line in f
-                    if line.strip()
-                )
-                for doc in tqdm(
-                    nlp.pipe(lines, batch_size=256),
-                    desc="*** extracting words...",
-                ):
-                    for token in doc:
-                        if token.pos_ not in uni_pos_set:
-                            continue
-                        w = token.lower_
-                        if not w:
-                            continue
-                        if (
-                            w in self.stop_words
-                            or w[0] in punc_all
-                            or w[-1] in punc_all
-                            or any(c in punc_without for c in w)
-                            or any(c.isdigit() for c in w)
-                        ):
-                            continue
-                        sents = unigram_map[w]
-                        if len(sents) < max_sents_per_word:
-                            sents.append(remove_punc_spaces(token.sent.text.lower()))
+            for doc in tqdm(
+                nlp.pipe(self._file_chunks(filepath), batch_size=256),
+                desc="*** extracting words...",
+            ):
+                for token in doc:
+                    if token.pos_ not in uni_pos_set:
+                        continue
+                    w = token.lower_
+                    if not w:
+                        continue
+                    if (
+                        w in self.stop_words
+                        or w[0] in punc_all
+                        or w[-1] in punc_all
+                        or any(c in punc_without for c in w)
+                        or any(c.isdigit() for c in w)
+                    ):
+                        continue
+                    sents = unigram_map[w]
+                    if len(sents) < max_sents_per_word:
+                        sents.append(remove_punc_spaces(token.sent.text.lower()))
 
         logger.info(f"Total number of unigrams extracted: {len(unigram_map)}")
         return dict(unigram_map)
@@ -193,22 +214,15 @@ class WordExtractor:
         )
 
         for filepath in tqdm(file_list, desc="*** targeted extraction..."):
-            with open(filepath, encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
+            for doc in self.model_nlp.pipe(self._file_chunks(filepath), batch_size=256):
+                for spacy_sent in doc.sents:
+                    sent_text = remove_punc_spaces(spacy_sent.text.strip().lower())
+                    if not sent_text:
                         continue
-                    sent = (
-                        " ".join(line.split())
-                        .replace(" -", "-")
-                        .replace("- ", "-")
-                        .replace(" '", "'")
-                    )
-                    sent_lower = sent.lower()
-                    found = {m.group(1) for m in pattern.finditer(sent_lower)}
+                    found = {m.group(1) for m in pattern.finditer(sent_text)}
                     for term in found:
-                        sents = result[term]
-                        if len(sents) < max_sents_per_word:
-                            sents.append(remove_punc_spaces(sent_lower))
+                        if len(result[term]) < max_sents_per_word:
+                            result[term].append(sent_text)
 
         logger.info(f"Found {len(result)}/{len(term_set)} requested terms")
         return dict(result)

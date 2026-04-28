@@ -1,8 +1,8 @@
 import logging
 import numpy as np
 from .models import TermSummary
-from .embedding_creator import EmbeddingCreator
-from ..config import PROJECT_ROOT
+from .embedding_creator import create_embedding_creator
+from ..config import PROJECT_ROOT, CACHE_DIR
 from ..utils import save_set_to_csv
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class EmbeddingCache:
         layer_str = f"_L{layer}" if layer is not None else ""
         # remove "/" from file name to avoid errors
         safe_name = model_name.replace("/", "_")
-        self.path = PROJECT_ROOT / f"cache_{cache_domain}_{safe_name}{layer_str}.npz"
+        self.path = CACHE_DIR / f"{cache_domain}_{safe_name}{layer_str}.npz"
 
     def save_cache(self, term_candidates, sentence_cache, lemma_sentences):
 
@@ -219,7 +219,7 @@ def _load_or_compute(
         )
     else:
         logger.info(f"Computing embeddings for {cache_domain}...")
-        embedding_creator = EmbeddingCreator(
+        embedding_creator = create_embedding_creator(
             corpus, model_name=model_name, token_embedding_layer=layer
         )
         term_candidates, sentence_cache, lemma_sentences = (

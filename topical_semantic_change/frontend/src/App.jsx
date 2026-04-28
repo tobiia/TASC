@@ -176,8 +176,8 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Lexical Semantic Change</h1>
-        <span>word embeddings over time · Top2Vec topic clusters · 3D PCA visualization</span>
+        <h1>TASC - Topic-Aware Semantic Change</h1>
+        <span>Word embeddings over 2 time periods · Top2Vec topic clusters · Contextual Entropy as 3rd Dimension</span>
       </header>
 
       {(phase === 'polling' || phase === 'loading') && (

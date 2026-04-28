@@ -1,14 +1,18 @@
 // 3D visualization of word embeddings and topics over time
+// Axes: X = PC 1, Y = PC 2, Z = Contextual Entropy (semantic variability)
 
 import { useMemo } from 'react';
 import Plot from '../plotly';
 import { TOPIC_COLORS } from './TopicList';
+
 const EARLY_COLOR = '#378ADD';  // corpus1 / older period
-const LATE_COLOR = '#D85A30';  // corpus2 / newer period
+const LATE_COLOR = '#D85A30';   // corpus2 / newer period
 
 export default function PlotCanvas({ activeWords, topics, documents, activeTopics, onTopicClick }) {
   // activeWords: array of { word, color, trajectory: [{ x, y, z, period }] }
   // documents:   array of { x, y, z, topic, period, text }
+  //
+  // x = PC 1, y = PC 2, z = contextual entropy
 
   // Derive period names from active word trajectories, falling back to documents
   const [earlyPeriod, latePeriod] = useMemo(() => {
@@ -50,7 +54,8 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
       });
     }
 
-    // document scatter — points colored by corpus period, dimmed when a different topic is active
+    // Document scatter — points colored by corpus period, dimmed when a different topic is active
+    // Z = contextual entropy (distance from topic centroid)
     if (documents?.length > 0) {
       const docTrace = (docs, opacity, size, showlegend) => ({
         type: 'scatter3d',
@@ -62,14 +67,14 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
         marker: {
           color: docs.map(d =>
             d.period === earlyPeriod ? EARLY_COLOR :
-            d.period === latePeriod  ? LATE_COLOR  : '#888888'
+              d.period === latePeriod ? LATE_COLOR : '#888888'
           ),
           size,
           opacity,
           line: { width: 0 },
         },
-        customdata: docs.map(d => ({ type: 'topic', id: d.topic })),
-        hovertemplate: 'Topic %{customdata.id}<extra></extra>',
+        customdata: docs.map(d => ({ type: 'topic', id: d.topic, entropy: d.entropy })),
+        hovertemplate: 'Topic %{customdata.id}<br>variability: %{customdata.entropy:.3f}<extra></extra>',
         showlegend,
       });
 
@@ -87,8 +92,8 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
             y: topicDocs.map(d => d.y),
             z: topicDocs.map(d => d.z),
             marker: { color, size: 5, opacity: 0.85, line: { width: 0 } },
-            customdata: topicDocs.map(d => ({ type: 'topic', id: d.topic })),
-            hovertemplate: 'Topic %{customdata.id}<extra></extra>',
+            customdata: topicDocs.map(d => ({ type: 'topic', id: d.topic, entropy: d.entropy })),
+            hovertemplate: 'Topic %{customdata.id}<br>variability: %{customdata.entropy:.3f}<extra></extra>',
             showlegend: false,
           });
         }
@@ -97,25 +102,26 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
       }
     }
 
-    // WORD TRAJECTORIES (lines + markers through time)
+    // Word trajectories (lines + markers through time)
+    // Both time-points share the same Z (entropy is cross-corpus),
+    // so the arrow is vertical in the XY semantic plane at a fixed height.
     activeWords.forEach(({ word, color, trajectory }) => {
       if (!trajectory || trajectory.length === 0) return;
 
       const total = trajectory.length;
 
-      // Color each label: first point = early (blue), last = word color, middle = grey
       const labelColors = trajectory.map((_, i) => {
         if (i === 0) return EARLY_COLOR;
         if (i === total - 1) return color;
         return '#888';
       });
 
-      // Label: first point = period name, last = "word\nperiod", middle = period name
       const labels = trajectory.map((p, i) => {
         if (i === total - 1) return `${word}  (${p.period})`;
         return p.period;
       });
 
+      // entropy differs per time point now — read from each trajectory point's z
       result.push({
         type: 'scatter3d',
         mode: 'lines+markers+text',
@@ -136,8 +142,13 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
           size: trajectory.map((_, i) => i === total - 1 ? 10 : 8),
           line: { width: 1.5, color: 'white' },
         },
-        customdata: trajectory.map(p => ({ type: 'word', word, period: p.period })),
-        hovertemplate: `<b>${word}</b><br>%{customdata.period}<extra></extra>`,
+        customdata: trajectory.map(p => ({
+          type: 'word',
+          word,
+          period: p.period,
+          entropy: p.z,
+        })),
+        hovertemplate: `<b>${word}</b><br>%{customdata.period}<br>entropy: %{customdata.entropy:.3f}<extra></extra>`,
       });
     });
 
@@ -196,7 +207,7 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
             zaxis: { ...axisStyle, title: 'PC 3' },
             bgcolor: 'rgba(235,233,228,0.3)',
             camera: {
-              eye: { x: 1.5, y: 0.1, z: 0.1 },   // looking mostly along Y/Z, X spread is horizontal
+              eye: { x: 1.4, y: 1.4, z: 0.8 },
               up: { x: 0, y: 0, z: 1 },
               center: { x: 0, y: 0, z: 0 },
             },

@@ -45,6 +45,8 @@ def load_data():
         word_means: {word: (mean_embed_c1, mean_embed_c2)}
         word_occurrences: {word: [{"text": str, "date": corpus_name}, ...]}
         all_sentences: deduplicated list of all sentences (for topic modelling)
+        x_embeds: raw embed objects for corpus 1, keyed by word
+        y_embeds: raw embed objects for corpus 2, keyed by word
     """
     _validate_corpus_paths()
 
@@ -113,10 +115,74 @@ def load_data():
             "This may indicate a problem with word extraction."
         )
 
-    return words, word_means, word_occurrences, all_sentences
+    return words, word_means, word_occurrences, all_sentences, x_embeds, y_embeds
+
+
+def compute_word_entropy(word, x_embeds, y_embeds):
+    """Compute per-corpus contextual entropy for a word.
+
+    Both corpora are compared against the shared cross-corpus prototype,
+    so the two entropy values are directly comparable — a word that was
+    stable in c1 but variable in c2 will show low then high Z in the plot,
+    making the diachronic change in variability visible as vertical movement.
+
+    High entropy = semantically dispersed / variable usages relative to the
+                   shared prototype.
+    Low entropy  = stable, predictable usages.
+
+    Args:
+        word: word string
+        x_embeds: raw embed objects for corpus 1
+        y_embeds: raw embed objects for corpus 2
+
+    Returns:
+        (entropy_c1, entropy_c2): floats in [0, 1]
+    """
+    x_vecs = x_embeds[word].word_embeds  # (n_c1, hidden_dim)
+    y_vecs = y_embeds[word].word_embeds  # (n_c2, hidden_dim)
+    all_vecs = np.vstack([x_vecs, y_vecs])  # (n_total, hidden_dim)
+
+    # shared cross-corpus prototype (L2-normalised mean)
+    prototype = all_vecs.mean(axis=0)
+    prototype_norm = np.linalg.norm(prototype)
+    if prototype_norm > 0:
+        prototype = prototype / prototype_norm
+
+    def _mean_cosine_distance(vecs):
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        normalised = vecs / np.maximum(norms, 1e-9)
+        sims = normalised @ prototype
+        return float(np.clip(1.0 - sims.mean(), 0.0, 1.0))
+
+    return _mean_cosine_distance(x_vecs), _mean_cosine_distance(y_vecs)
+
+
+def compute_all_entropies(words, x_embeds, y_embeds):
+    """Compute per-corpus contextual entropy for every word.
+
+    Args:
+        words: list of word strings
+        x_embeds: raw embed objects for corpus 1
+        y_embeds: raw embed objects for corpus 2
+
+    Returns:
+        dict {word: (entropy_c1, entropy_c2)}
+    """
+    entropies = {}
+    for w in words:
+        try:
+            entropies[w] = compute_word_entropy(w, x_embeds, y_embeds)
+        except Exception:
+            entropies[w] = (0.0, 0.0)
+    return entropies
 
 
 def fit_pca(word_means, extra_vecs=None):
+    """Fit a 3-component PCA.
+
+    All three spatial axes are PCA components so that words, documents,
+    and topic centroids share a fully coherent semantic space.
+    """
     # Use per-word mean across both time points so words and topics
     # are represented at the same granularity when fitting PCA.
     vecs = [(x_mean + y_mean) / 2 for x_mean, y_mean in word_means.values()]
@@ -134,36 +200,51 @@ def fit_pca(word_means, extra_vecs=None):
         raise RuntimeError(f"PCA fitting failed: {e}") from e
 
 
-def get_word_trajectory(word, word_means, pca):
-    """Return [{period, x, y, z}] for the two corpus time-points.
+def get_word_trajectory(word, word_means, pca, word_entropies=None):
+    """Return [{period, x, y, z, entropy}] for the two corpus time-points.
+
+    Axes:
+        x — PC 1  }
+        y — PC 2  } all three from PCA — fully coherent semantic space
+        z — PC 3  }
+
+    entropy is returned as a display field for hover/UI only, not spatial.
 
     Args:
         word: word string
         word_means: dict of word -> (embed_c1, embed_c2)
-        pca: fitted PCA object
+        pca: fitted 3-component PCA object
+        word_entropies: optional dict of word -> (entropy_c1, entropy_c2)
 
     Returns:
-        List of dicts with keys: period, x, y, z (3D coordinates)
-        Returns empty list if word not found in word_means
+        List of dicts with keys: period, x, y, z, entropy
+        Returns empty list if word not found in word_means.
     """
     if word not in word_means:
         return []
 
     try:
         x_mean, y_mean = word_means[word]
-        coords = pca.transform(np.vstack([x_mean, y_mean]))
+        coords = pca.transform(np.vstack([x_mean, y_mean]))  # (2, 3)
+
+        entropy_c1, entropy_c2 = (0.0, 0.0)
+        if word_entropies is not None:
+            entropy_c1, entropy_c2 = word_entropies.get(word, (0.0, 0.0))
+
         return [
             {
                 "period": CORPUS1_NAME,
                 "x": float(coords[0][0]),
                 "y": float(coords[0][1]),
                 "z": float(coords[0][2]),
+                "entropy": float(entropy_c1),
             },
             {
                 "period": CORPUS2_NAME,
                 "x": float(coords[1][0]),
                 "y": float(coords[1][1]),
                 "z": float(coords[1][2]),
+                "entropy": float(entropy_c2),
             },
         ]
     except Exception as e:

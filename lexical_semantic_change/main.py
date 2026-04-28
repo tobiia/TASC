@@ -65,7 +65,7 @@ def main():
 
     logger.info("Setting up...")
     corpora_direct = Path(args.corpus1)
-    cache_domain = f"{corpora_direct.parent}"
+    cache_domain = f"{corpora_direct.parent.name}"
 
     # load terms
     words_path = Path(args.words)

@@ -67,7 +67,7 @@ class BaseEmbeddingCreator:
         model_name: str,
         token_embedding_layer: int | None = None,
         max_seq_length: int = 256,
-        batch_size: int = 64,
+        batch_size: int = 32,
         rng_seed: int = 267135941556543938173580506427407010431,
     ):
         """Initialise shared state.
@@ -276,7 +276,7 @@ class StandardEmbeddingCreator(BaseEmbeddingCreator):
 
         for batch_start in tqdm(
             range(0, len(sentences), self.batch_size),
-            desc="****************** embedding batches...",
+            desc="*** embedding batches...",
         ):
             batch = sentences[batch_start : batch_start + self.batch_size]
             encoded = self.tokenizer(
@@ -349,7 +349,7 @@ class StandardEmbeddingCreator(BaseEmbeddingCreator):
         accumulators = {}
 
         for surface_form, sents in tqdm(
-            candidates.items(), desc="***************** building word embeddings..."
+            candidates.items(), desc="*** building word embeddings..."
         ):
             lemma = self._lemmatize_term(surface_form)
             candidate_words = surface_form.split()
@@ -416,7 +416,7 @@ class XLLexemeEmbeddingCreator(BaseEmbeddingCreator):
 
         if not _WORD_TRANSFORMER_AVAILABLE:
             raise ImportError(
-                "word_transformers is required for XL-Lexeme."
+                "WordTransformer is required for XL-Lexeme."
                 "Install it at: https://github.com/pierluigic/xl-lexeme"
             )
         try:
@@ -454,32 +454,40 @@ class XLLexemeEmbeddingCreator(BaseEmbeddingCreator):
             results: {lemma: TermSummary} with word and sentence embeddings
             lemma_sentences: {lemma: [original sentence strings]} for the API
         """
-        accumulators = {}
+        # Collect all InputExamples across every term so encode() can be
+        # called in batches rather than one example at a time.
+        examples: list = []
+        meta: list[tuple[str, str]] = []  # (lemma, sent) parallel to examples
 
-        for surface_form, sents in tqdm(
-            candidates.items(), desc="***************** building word embeddings..."
-        ):
+        for surface_form, sents in candidates.items():
             lemma = self._lemmatize_term(surface_form)
             surface_lower = surface_form.lower()
+            for sent in sents:
+                start = sent.find(surface_lower)
+                if start == -1:
+                    continue
+                span = (start, start + len(surface_lower))
+                examples.append(InputExample(texts=sent, positions=span))  # type: ignore[arg-type]
+                meta.append((lemma, sent))
 
+        accumulators: dict = {}
+
+        embeds = self.model.encode(
+            examples, batch_size=self.batch_size, show_progress_bar=True
+        )
+        for i, word_embed in enumerate(embeds):
+            lemma, sent = meta[i]
             if lemma not in accumulators:
                 accumulators[lemma] = {
                     "word_embeds": [],
                     "sent_embeds": [],
                     "sentences": [],
                 }
-
-            for sent in sents:
-                start = sent.find(surface_lower)
-                if start == -1:
-                    continue
-                span = (start, start + len(surface_lower))
-                word_embed = self.model.encode([InputExample(texts=sent, positions=span)])[0]  # type: ignore[arg-type]
-                accumulators[lemma]["word_embeds"].append(word_embed)
-                # XL-Lexeme has no independent sentence embedding;
-                # reuse the word embedding so TermSummary stays consistent.
-                accumulators[lemma]["sent_embeds"].append(word_embed)
-                accumulators[lemma]["sentences"].append(sent)
+            accumulators[lemma]["word_embeds"].append(word_embed)
+            # XL-Lexeme has no independent sentence embedding;
+            # reuse the word embedding so TermSummary stays consistent.
+            accumulators[lemma]["sent_embeds"].append(word_embed)
+            accumulators[lemma]["sentences"].append(sent)
 
         results, lemma_sentences = {}, {}
         for lemma, acc in accumulators.items():

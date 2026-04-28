@@ -85,37 +85,47 @@ class WordExtractor:
             )
             self.stop_words = set()
 
-    def _file_chunks(self, filepath: Path):
+    def _file_chunks(self, filepath: Path, max_chars: int = 50_000):
         """Yield cleaned paragraph-level chunks without loading the whole file.
 
         Accumulates lines until a blank line is hit, then yields the cleaned
         chunk. Only one paragraph is held in memory at a time, so large files
-        are streamed rather than read whole.
+        are streamed rather than read whole. Paragraphs longer than max_chars
+        are split at the nearest space boundary to avoid OOM in the NLP pipeline.
         """
+
+        def _clean(parts: list[str]) -> str:
+            return (
+                " ".join("".join(parts).split())
+                .replace(" -", "-")
+                .replace("- ", "-")
+                .replace(" '", "'")
+            )
+
+        def _emit(chunk: str):
+            while len(chunk) > max_chars:
+                split_at = chunk.rfind(" ", 0, max_chars)
+                if split_at == -1:
+                    split_at = max_chars
+                yield chunk[:split_at]
+                chunk = chunk[split_at:].lstrip()
+            if chunk:
+                yield chunk
+
         current: list[str] = []
         with open(filepath, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
                     current.append(line)
                 elif current:
-                    chunk = (
-                        " ".join("".join(current).split())
-                        .replace(" -", "-")
-                        .replace("- ", "-")
-                        .replace(" '", "'")
-                    )
+                    chunk = _clean(current)
                     if chunk:
-                        yield chunk
+                        yield from _emit(chunk)
                     current = []
         if current:
-            chunk = (
-                " ".join("".join(current).split())
-                .replace(" -", "-")
-                .replace("- ", "-")
-                .replace(" '", "'")
-            )
+            chunk = _clean(current)
             if chunk:
-                yield chunk
+                yield from _emit(chunk)
 
     def unigram_extraction(self, max_sents_per_word=200) -> dict[str, list[str]]:
         """Extract unigram candidates (single tokens) from corpus.
@@ -156,7 +166,7 @@ class WordExtractor:
         for filepath in file_list:
             logger.debug(f"Processing {filepath.name}...")
             for doc in tqdm(
-                nlp.pipe(self._file_chunks(filepath), batch_size=256),
+                nlp.pipe(self._file_chunks(filepath), batch_size=32),
                 desc="*** extracting words...",
             ):
                 for token in doc:
@@ -214,7 +224,11 @@ class WordExtractor:
         )
 
         for filepath in tqdm(file_list, desc="*** targeted extraction..."):
-            for doc in self.model_nlp.pipe(self._file_chunks(filepath), batch_size=256):
+            for doc in self.model_nlp.pipe(
+                self._file_chunks(filepath),
+                batch_size=64,
+                disable=["tok2vec", "tagger"],
+            ):
                 for spacy_sent in doc.sents:
                     sent_text = remove_punc_spaces(spacy_sent.text.strip().lower())
                     if not sent_text:

@@ -14,7 +14,15 @@ from transformers.utils import logging as hf_logging
 
 hf_logging.set_verbosity_error()
 
+from huggingface_hub.utils.tqdm import disable_progress_bars
+
+disable_progress_bars("huggingface_hub")
+
 logger = logging.getLogger(__name__)
+# silence httpx 404s and HTTP request logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+# silence sentence_transformers
+logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 
 # -----------------------------------------------------------
 # ANCHOR - config
@@ -40,9 +48,7 @@ def main():
     args = parser.parse_args()
 
     # Setup logging
-    logging.basicConfig(
-        level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     logger.info(f"Starting LSC evaluation with label: {args.label or 'default'}")
 
     # Validate paths
@@ -59,7 +65,7 @@ def main():
 
     logger.info("Setting up...")
     corpora_direct = Path(args.corpus1)
-    cache_domain = f"{corpora_direct.parent}"
+    cache_domain = corpora_direct.parent.name
 
     try:
         gold_df = load_gold_set(args.words)
@@ -146,7 +152,7 @@ def main():
         return
 
     results_df = pd.DataFrame(results)
-    results_df.to_csv(output_path, index=False)
+    results_df.to_csv(output_path, index=False, mode="a")
     logger.info(f"Results saved to {output_path}")
     print("\n", results_df.to_string(index=False))
 

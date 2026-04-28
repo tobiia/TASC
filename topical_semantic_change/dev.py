@@ -16,19 +16,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_ROOT / "topical_semantic_change" / "frontend"
 
 
+def _popen(label, *args, **kwargs):
+    try:
+        return subprocess.Popen(*args, **kwargs)
+    except FileNotFoundError as e:
+        print(f"Error: could not start {label} — {e}")
+        print(f"  Make sure the required tool is installed and on your PATH.")
+        sys.exit(1)
+
+
+def _stop(proc, name, timeout=5):
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"  {name} did not stop in time, killing it.")
+        proc.kill()
+        proc.wait()
+
+
 def main():
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
 
-    backend = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "topical_semantic_change.backend.app.main:app",
-        ],
+    backend = _popen(
+        "uvicorn (is it installed? try: pip install uvicorn)",
+        [sys.executable, "-m", "uvicorn", "topical_semantic_change.backend.app.main:app"],
         cwd=PROJECT_ROOT,
     )
-    frontend = subprocess.Popen(
+    frontend = _popen(
+        "npm (is Node.js installed? https://nodejs.org)",
         [npm, "run", "dev"],
         cwd=FRONTEND_DIR,
     )
@@ -39,10 +55,8 @@ def main():
 
     def _shutdown(sig, frame):
         print("\nShutting down...")
-        frontend.terminate()
-        backend.terminate()
-        frontend.wait()
-        backend.wait()
+        _stop(frontend, "frontend")
+        _stop(backend, "backend")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
@@ -52,11 +66,11 @@ def main():
     while True:
         if backend.poll() is not None:
             print("\nBackend exited — stopping frontend.")
-            frontend.terminate()
+            _stop(frontend, "frontend")
             break
         if frontend.poll() is not None:
             print("\nFrontend exited — stopping backend.")
-            backend.terminate()
+            _stop(backend, "backend")
             break
         time.sleep(1)
 

@@ -3,9 +3,14 @@ from pathlib import Path
 
 data_dir = Path(__file__).parent
 
+out1 = data_dir / "1860s"
+out2 = data_dir / "1950s"
+out1.mkdir(exist_ok=True)
+out2.mkdir(exist_ok=True)
+
 with (
-    open(data_dir / "corpus1.txt", "w", encoding="utf-8") as f1,
-    open(data_dir / "corpus2.txt", "w", encoding="utf-8") as f2,
+    open(out1 / "corpus1.txt", "w", encoding="utf-8") as f1,
+    open(out2 / "corpus2.txt", "w", encoding="utf-8") as f2,
 ):
 
     for uses_file in sorted(data_dir.glob("*/uses.csv")):
@@ -17,7 +22,6 @@ with (
                 except (ValueError, KeyError):
                     continue
 
-                lemma = row["lemma"]
                 context = row["context"].strip()
                 line = f"{context}\n"
 

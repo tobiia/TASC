@@ -1,19 +1,27 @@
 from contextlib import asynccontextmanager
 import logging
 import os
+from typing import Optional
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sklearn.decomposition import PCA
+from top2vec import Top2Vec
 
 from .core import (
     load_data,
     fit_pca,
     get_word_trajectory,
     compute_all_entropies,
+    get_nearest_topics,
     MODEL_NAME,
 )
 from .topic import train_top2vec, get_topics, group_sentences, assign_sentence_topics
+
+from .config import MAX_TOPIC_SENTENCES, MAX_RENDER_SENTENCES, RANDOM_SEED
+from pathlib import Path
+from .config import CORPUS1, CORPUS2
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +35,9 @@ all_sentences: list = []
 sentence_topic: dict = {}
 sentence_embeddings: dict = {}
 documents_payload: list = []
-pca = None
-top2vec_model = None
+topic_centroids_payload: list = []
+pca: Optional[PCA] = None
+top2vec_model: Optional[Top2Vec] = None
 startup_error = None
 
 
@@ -36,7 +45,7 @@ startup_error = None
 async def lifespan(app: FastAPI):
     global word_list, word_means, word_occurrences, word_entropies, sentence_period
     global all_sentences, sentence_topic, sentence_embeddings, documents_payload
-    global pca, top2vec_model, startup_error
+    global topic_centroids_payload, pca, top2vec_model, startup_error
 
     try:
         logger.info("Loading data...")
@@ -50,21 +59,49 @@ async def lifespan(app: FastAPI):
         logger.info(f"Computed entropy for {len(word_entropies)} words")
 
         logger.info("Grouping sentences into mega-documents...")
-        groups, mega_doc_texts = group_sentences(all_sentences, MODEL_NAME)
+        # Randomly subsample for Top2Vec if corpus exceeds limit.
+        # Seed is fixed so the same corpus always picks the same sentences
+        # on a fresh run (before the cache exists). Word embeddings and the
+        # occurrence bar always use the full all_sentences list unchanged.
+        rng = np.random.default_rng(seed=RANDOM_SEED)
+        if len(all_sentences) > MAX_TOPIC_SENTENCES:
+            topic_indices = np.sort(
+                rng.choice(len(all_sentences), size=MAX_TOPIC_SENTENCES, replace=False)
+            )
+            topic_sentences = [all_sentences[i] for i in topic_indices]
+            logger.info(
+                f"Sampled {MAX_TOPIC_SENTENCES} / {len(all_sentences)} "
+                f"sentences for Top2Vec"
+            )
+        else:
+            topic_indices = np.arange(len(all_sentences))
+            topic_sentences = all_sentences
+
+        groups, mega_doc_texts = group_sentences(topic_sentences, MODEL_NAME)
         logger.info(
-            f"Grouped {len(all_sentences)} sentences into {len(mega_doc_texts)} documents"
+            f"Grouped {len(topic_sentences)} sentences into "
+            f"{len(mega_doc_texts)} documents"
         )
 
         logger.info("Training Top2Vec model...")
-        top2vec_model = train_top2vec(mega_doc_texts)
+        cache_domain = f"{Path(CORPUS1).stem}_{Path(CORPUS2).stem}"
+        top2vec_model = train_top2vec(mega_doc_texts, cache_domain=cache_domain)
         logger.info(
             f"Trained Top2Vec model with {top2vec_model.get_num_topics()} topics"
         )
 
         logger.info("Assigning sentence topics...")
-        sentence_topic, sentence_embeddings = assign_sentence_topics(
-            top2vec_model, groups
-        )
+        # assign_sentence_topics returns indices into topic_sentences (0..N-1).
+        # Remap to global all_sentences indices using topic_indices.
+        raw_topic, raw_embeddings = assign_sentence_topics(top2vec_model, groups)
+        sentence_topic = {
+            int(topic_indices[local_idx]): topic_id
+            for local_idx, topic_id in raw_topic.items()
+        }
+        sentence_embeddings = {
+            int(topic_indices[local_idx]): emb
+            for local_idx, emb in raw_embeddings.items()
+        }
         logger.info(f"Assigned topics to {len(sentence_topic)} sentences")
 
         for occ_list in word_occurrences.values():
@@ -83,13 +120,49 @@ async def lifespan(app: FastAPI):
         pca = fit_pca(word_means, extra_vecs=sent_vecs)
         logger.info("PCA fitting complete")
 
+        logger.info("Projecting topic centroids...")
+        n_topics = top2vec_model.get_num_topics()
+        topic_vecs = top2vec_model.topic_vectors  # (n_topics, hidden_dim)
+        topic_ids_list = list(range(n_topics))
+        topic_coords = pca.transform(topic_vecs)  # (n_topics, 3)
+        topics_meta = get_topics(top2vec_model)
+        words_by_id = {t["id"]: t["words"] for t in topics_meta}
+        for i, tid in enumerate(topic_ids_list):
+            topic_centroids_payload.append(
+                {
+                    "id": tid,
+                    "x": float(topic_coords[i][0]),
+                    "y": float(topic_coords[i][1]),
+                    "z": float(topic_coords[i][2]),
+                    "words": words_by_id.get(tid, []),
+                }
+            )
+        logger.info(f"Projected {len(topic_centroids_payload)} topic centroids")
+
         logger.info("Pre-computing document 3D projections...")
         valid_indices = [
             i for i in range(len(all_sentences)) if i in sentence_embeddings
         ]
-        # PCA is 3-component: transform returns (n, 3)
+
+        # Randomly subsample for rendering — uses the same rng (seed=42) so the
+        # rendered subset is stable across restarts. Occurrence bar still uses
+        # all sentences unchanged.
+        if len(valid_indices) > MAX_RENDER_SENTENCES:
+            render_indices = sorted(
+                rng.choice(
+                    valid_indices, size=MAX_RENDER_SENTENCES, replace=False
+                ).tolist()
+            )
+            logger.info(
+                f"Subsampled {MAX_RENDER_SENTENCES} / {len(valid_indices)} "
+                f"sentences for 3D rendering"
+            )
+        else:
+            render_indices = valid_indices
+
+        # Project only the sentences we're actually going to render
         vecs_3d = pca.transform(
-            np.array([sentence_embeddings[i] for i in valid_indices])
+            np.array([sentence_embeddings[i] for i in render_indices])
         )
 
         # Pre-compute topic centroid norms once for efficiency
@@ -103,7 +176,7 @@ async def lifespan(app: FastAPI):
             except (IndexError, AttributeError):
                 pass
 
-        for j, sent_idx in enumerate(valid_indices):
+        for j, sent_idx in enumerate(render_indices):
             sentence = all_sentences[sent_idx]
             topic_id = sentence_topic.get(sent_idx, -1)
 
@@ -122,10 +195,10 @@ async def lifespan(app: FastAPI):
 
             documents_payload.append(
                 {
-                    "x": float(vecs_3d[j][0]),  # PC 1
-                    "y": float(vecs_3d[j][1]),  # PC 2
-                    "z": float(vecs_3d[j][2]),  # PC 3
-                    "entropy": doc_entropy,  # display only
+                    "x": float(vecs_3d[j][0]),
+                    "y": float(vecs_3d[j][1]),
+                    "z": float(vecs_3d[j][2]),
+                    "entropy": doc_entropy,
                     "topic": topic_id,
                     "period": sentence_period.get(sentence, ""),
                     "text": sentence,
@@ -192,7 +265,29 @@ def get_word_data(word):
             raise HTTPException(status_code=404, detail=f"Word '{word}' not found")
         trajectory = get_word_trajectory(word, word_means, pca, word_entropies)
         occurrences = word_occurrences.get(word, [])
-        return {"trajectory": trajectory, "occurrences": occurrences}
+
+        # nearest 2 topics per time period
+        topic_vecs = top2vec_model.topic_vectors
+        topic_ids_arr = list(range(top2vec_model.get_num_topics()))
+        x_mean, y_mean = word_means[word]
+        nearest = (
+            {
+                trajectory[0]["period"]: get_nearest_topics(
+                    x_mean, topic_vecs, topic_ids_arr
+                ),
+                trajectory[1]["period"]: get_nearest_topics(
+                    y_mean, topic_vecs, topic_ids_arr
+                ),
+            }
+            if len(trajectory) == 2
+            else {}
+        )
+
+        return {
+            "trajectory": trajectory,
+            "occurrences": occurrences,
+            "nearest_topics": nearest,
+        }
     except Exception as e:
         logger.error(f"Error getting word data for '{word}': {e}", exc_info=True)
         raise HTTPException(
@@ -232,6 +327,13 @@ def get_topics_endpoint():
             status_code=500,
             detail=f"Failed to retrieve topics: {str(e)}",
         ) from e
+
+
+@app.get("/api/topic-centroids")
+def get_topic_centroids_endpoint():
+    """Return PCA-projected 3D coordinates for every topic centroid."""
+    _ensure_ready()
+    return {"topic_centroids": topic_centroids_payload}
 
 
 @app.get("/api/documents")

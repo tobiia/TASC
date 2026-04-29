@@ -4,6 +4,7 @@ import spacy
 from tqdm import tqdm
 import torch
 from transformers import AutoModel, AutoTokenizer
+from sklearn.preprocessing import normalize
 from .models import TermSummary
 
 from transformers.utils import logging as hf_logging
@@ -107,8 +108,13 @@ class BaseEmbeddingCreator:
     def _lemmatize_term(self, term: str) -> str:
         return " ".join([token.lemma_ for token in self.model_nlp(term)])
 
-    def _l2_normalize(self, x: np.ndarray) -> np.ndarray:
-        return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
+    # REVIEW replace with this
+    def _l2_normalize(self, vectors):
+
+        if vectors.ndim == 2:
+            return normalize(vectors)
+        else:
+            return normalize(vectors.reshape(1, -1))[0]
 
     def _mean_pooling(self, model_output, attention_mask) -> torch.Tensor:
         token_embeddings = model_output[0]

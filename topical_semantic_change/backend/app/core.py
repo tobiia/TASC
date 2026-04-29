@@ -177,14 +177,12 @@ def compute_all_entropies(words, x_embeds, y_embeds):
     return entropies
 
 
-def fit_pca(word_means, extra_vecs=None):
+def fit_pca(word_means, extra_vecs=None) -> PCA:
     """Fit a 3-component PCA.
 
     All three spatial axes are PCA components so that words, documents,
     and topic centroids share a fully coherent semantic space.
     """
-    # Use per-word mean across both time points so words and topics
-    # are represented at the same granularity when fitting PCA.
     vecs = [(x_mean + y_mean) / 2 for x_mean, y_mean in word_means.values()]
 
     if extra_vecs is not None and len(extra_vecs):
@@ -193,9 +191,9 @@ def fit_pca(word_means, extra_vecs=None):
     if not vecs:
         raise ValueError("No vectors available for PCA fitting")
     try:
-        pca = PCA(n_components=3)
-        pca.fit(np.vstack(vecs))
-        return pca
+        reducer = PCA(n_components=3)
+        reducer.fit(np.vstack(vecs))
+        return reducer
     except Exception as e:
         raise RuntimeError(f"PCA fitting failed: {e}") from e
 
@@ -251,3 +249,26 @@ def get_word_trajectory(word, word_means, pca, word_entropies=None):
         raise RuntimeError(
             f"Failed to compute trajectory for word '{word}': {e}"
         ) from e
+
+
+def get_nearest_topics(word_embed, topic_vectors, topic_ids, n=2):
+    """Find the n nearest topic centroids to a word embedding by cosine similarity.
+
+    Args:
+        word_embed: np.ndarray (hidden_dim,) — the word's mean embedding for one period
+        topic_vectors: np.ndarray (n_topics, hidden_dim) — raw topic vectors from Top2Vec
+        topic_ids: list of int — topic ids corresponding to rows of topic_vectors
+        n: number of nearest topics to return (default 2)
+
+    Returns:
+        List of dicts: [{id, distance}] sorted closest first.
+        distance is cosine distance (1 - cosine_similarity), in [0, 1].
+    """
+    norm_word = word_embed / np.maximum(np.linalg.norm(word_embed), 1e-9)
+    norms = np.linalg.norm(topic_vectors, axis=1, keepdims=True)
+    norm_topics = topic_vectors / np.maximum(norms, 1e-9)
+    sims = norm_topics @ norm_word  # (n_topics,)
+    distances = 1.0 - sims
+
+    top_n = np.argsort(distances)[:n]
+    return [{"id": int(topic_ids[i]), "distance": float(distances[i])} for i in top_n]

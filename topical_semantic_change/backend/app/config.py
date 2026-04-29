@@ -1,4 +1,7 @@
 from pathlib import Path
+import os
+
+RANDOM_SEED = 42
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -6,11 +9,11 @@ SRC_DIR = PROJECT_ROOT / "topical_semantic_change"
 
 CACHE_DIR = PROJECT_ROOT / "cache"
 
+CORPUS_DIR = PROJECT_ROOT / "corpus"
+
 BACKEND = SRC_DIR / "backend"
 
 FRONTEND = SRC_DIR / "frontend"
-
-DATA_DIR = BACKEND / "data"
 
 # ANCHOR - where to set paths for app data
 
@@ -19,8 +22,17 @@ DATA_DIR = BACKEND / "data"
 # TXT: one term per line.
 # When set, extraction is done via fast string matching instead of full NLP.
 # None = extract all words (takes an extremely long time for long corpora)
-TERMS_FILE = str(DATA_DIR / "sample_small" / "truth.csv")
-CORPUS1 = str(DATA_DIR / "sample_small" / "1860s")
-CORPUS2 = str(DATA_DIR / "sample_small" / "1950s")
+TERMS_FILE = str(CORPUS_DIR / "sample" / "truth.csv")
+CORPUS1 = str(CORPUS_DIR / "sample" / "1800s")
+CORPUS2 = str(CORPUS_DIR / "sample" / "1900s")
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
+
+
 TOP2VEC_MODEL = "all-mpnet-base-v2"
+# Maximum number of sentences fed to Top2Vec for topic modelling.
+MAX_TOPIC_SENTENCES = 50000
+# Maximum number of sentence points rendered in the 3D plot.
+# Sentences beyond this limit are still available in the occurrence bar.
+MAX_RENDER_SENTENCES = 10000
+TOP2VEC_NUM_TOPICS = None
+TOP2VEC_WORKERS = os.cpu_count() or 4

@@ -1,9 +1,11 @@
 spacy
 pandas
 numpy
-top2vec
+scikit-learn
 fastapi[standard]
 sentence-transformers
-must instruct on how to install xl-lexeme
-huggingface (?)
 tqdm
+top2vec
+
+cd xl-lexeme, top2vec
+pip3 install .

@@ -1,20 +1,52 @@
 // 3D visualization of word embeddings and topics over time
-// Axes: X = PC 1, Y = PC 2, Z = Contextual Entropy (semantic variability)
+// Axes: X = PC 1, Y = PC 2, Z = PC 3
+//
+// NEAREST TOPIC LINES
+// When a word is active, two lines are drawn from each of its time-period
+// points to its nearest topic centroids:
+//   - 1st nearest: solid line, width 2.5, topic colour
+//   - 2nd nearest: dotted line, width 1.5, topic colour
+// Both appear in the legend under the word they belong to.
+//
+// WORD SELECTION / HALO
+// Clicking a word point in the plot calls onWordSelect(word), which App.jsx
+// uses to set `focusedWord`. TopicList and WordList both receive focusedWord
+// and apply a halo ring to the two nearest topics / the word itself.
 
 import { useMemo } from 'react';
 import Plot from '../plotly';
 import { TOPIC_COLORS } from './TopicList';
 
-const EARLY_COLOR = '#378ADD';  // corpus1 / older period
-const LATE_COLOR = '#D85A30';   // corpus2 / newer period
+const EARLY_COLOR = '#378ADD';
+const LATE_COLOR = '#D85A30';
 
-export default function PlotCanvas({ activeWords, topics, documents, activeTopics, onTopicClick }) {
-  // activeWords: array of { word, color, trajectory: [{ x, y, z, period }] }
-  // documents:   array of { x, y, z, topic, period, text }
-  //
-  // x = PC 1, y = PC 2, z = contextual entropy
+/** Lighten a hex colour toward white by `amount` (0–1). */
+function lightenColor(hex, amount = 0.5) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const r = Math.round(((n >> 16) & 0xff) + (255 - ((n >> 16) & 0xff)) * amount);
+  const g = Math.round(((n >> 8) & 0xff) + (255 - ((n >> 8) & 0xff)) * amount);
+  const b = Math.round((n & 0xff) + (255 - (n & 0xff)) * amount);
+  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
 
-  // Derive period names from active word trajectories, falling back to documents
+/** Darken a hex colour toward black by `amount` (0–1). */
+function darkenColor(hex, amount = 0.45) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const r = Math.round(((n >> 16) & 0xff) * (1 - amount));
+  const g = Math.round(((n >> 8) & 0xff) * (1 - amount));
+  const b = Math.round((n & 0xff) * (1 - amount));
+  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+export default function PlotCanvas({
+  activeWords,
+  topics,
+  topicCentroids,
+  documents,
+  activeTopics,
+  focusedWord,     // word string currently focused via plot click
+  onWordSelect,
+}) {
   const [earlyPeriod, latePeriod] = useMemo(() => {
     const traj = activeWords.find(w => w.trajectory?.length >= 2)?.trajectory;
     if (traj) return [traj[0].period, traj[traj.length - 1].period];
@@ -31,97 +63,164 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
     [topics]
   );
 
+  // lookup: topicId -> {x, y, z} for drawing nearest-topic lines
+  const centroidPosMap = useMemo(() =>
+    Object.fromEntries((topicCentroids ?? []).map(c => [c.id, c])),
+    [topicCentroids]
+  );
+
   const traces = useMemo(() => {
     const result = [];
 
-    // Time-period legend markers (invisible geometry, show in legend only)
+    // Compute nearest topic ids for the focused word inline so the linter
+    // can see the variable is used within the same useMemo scope.
+    const nearestTopicIds = (() => {
+      if (!focusedWord) return new Set();
+      const wordData = activeWords.find(w => w.word === focusedWord);
+      if (!wordData?.nearest_topics) return new Set();
+      const ids = new Set();
+      Object.values(wordData.nearest_topics).forEach(list =>
+        list.forEach(({ id }) => ids.add(id))
+      );
+      return ids;
+    })();
+
+    // ── Legend ghost markers ──────────────────────────────────────────────
     if (earlyPeriod && latePeriod) {
       result.push({
         type: 'scatter3d', mode: 'markers',
         name: earlyPeriod,
         x: [null], y: [null], z: [null],
-        marker: { color: EARLY_COLOR, size: 9, symbol: 'circle' },
-        showlegend: true,
-        hoverinfo: 'skip',
+        marker: { color: EARLY_COLOR, size: 8, symbol: 'circle' },
+        showlegend: true, hoverinfo: 'skip',
       });
       result.push({
         type: 'scatter3d', mode: 'markers',
         name: latePeriod,
         x: [null], y: [null], z: [null],
-        marker: { color: LATE_COLOR, size: 9, symbol: 'circle' },
-        showlegend: true,
-        hoverinfo: 'skip',
+        marker: { color: LATE_COLOR, size: 8, symbol: 'circle' },
+        showlegend: true, hoverinfo: 'skip',
       });
     }
 
-    // Document scatter — points colored by corpus period, dimmed when a different topic is active
-    // Z = contextual entropy (distance from topic centroid)
-    if (documents?.length > 0) {
-      const docTrace = (docs, opacity, size, showlegend) => ({
-        type: 'scatter3d',
-        mode: 'markers',
-        name: 'documents',
-        x: docs.map(d => d.x),
-        y: docs.map(d => d.y),
-        z: docs.map(d => d.z),
-        marker: {
-          color: docs.map(d =>
-            d.period === earlyPeriod ? EARLY_COLOR :
-              d.period === latePeriod ? LATE_COLOR : '#888888'
-          ),
-          size,
-          opacity,
-          line: { width: 0 },
-        },
-        customdata: docs.map(d => ({ type: 'topic', id: d.topic, entropy: d.entropy })),
-        hovertemplate: 'Topic %{customdata.id}<br>variability: %{customdata.entropy:.3f}<extra></extra>',
-        showlegend,
-      });
-
-      if (activeTopics.size > 0) {
-        const rest = documents.filter(d => !activeTopics.has(d.topic));
-        if (rest.length > 0) result.push(docTrace(rest, 0.1, 3, false));
-        for (const topicId of activeTopics) {
-          const color = topicColorMap[topicId] ?? '#888';
-          const topicDocs = documents.filter(d => d.topic === topicId);
-          if (topicDocs.length === 0) continue;
-          result.push({
-            type: 'scatter3d', mode: 'markers',
-            name: `topic ${topicId}`,
-            x: topicDocs.map(d => d.x),
-            y: topicDocs.map(d => d.y),
-            z: topicDocs.map(d => d.z),
-            marker: { color, size: 5, opacity: 0.85, line: { width: 0 } },
-            customdata: topicDocs.map(d => ({ type: 'topic', id: d.topic, entropy: d.entropy })),
-            hovertemplate: 'Topic %{customdata.id}<br>variability: %{customdata.entropy:.3f}<extra></extra>',
-            showlegend: false,
-          });
-        }
-      } else {
-        result.push(docTrace(documents, 0.4, 4, false));
+    // ── Document cloud — only visible when a topic is selected ───────────
+    if (documents?.length > 0 && activeTopics.size > 0) {
+      for (const topicId of activeTopics) {
+        const color = topicColorMap[topicId] ?? '#888';
+        const topicDocs = documents.filter(d => d.topic === topicId);
+        if (topicDocs.length === 0) continue;
+        result.push({
+          type: 'scatter3d', mode: 'markers',
+          name: `topic ${topicId}`,
+          x: topicDocs.map(d => d.x),
+          y: topicDocs.map(d => d.y),
+          z: topicDocs.map(d => d.z),
+          marker: { color, size: 2, opacity: 0.45, line: { width: 0 } },
+          customdata: topicDocs.map(d => ({ entropy: d.entropy ?? 0 })),
+          hovertemplate: `Topic ${topicId}<br>variability: %{customdata.entropy:.3f}<extra></extra>`,
+          showlegend: false,
+        });
       }
     }
 
-    // Word trajectories (lines + markers through time)
-    // Both time-points share the same Z (entropy is cross-corpus),
-    // so the arrow is vertical in the XY semantic plane at a fixed height.
-    activeWords.forEach(({ word, color, trajectory }) => {
+    // ── Topic centroids ───────────────────────────────────────────────────
+    // Visible when:
+    //   (a) no words on plot AND no topic clicked — all centroids show
+    //   (b) a topic is highlighted via TopicList — that topic's centroid shows
+    //   (c) a word is focused via plot click — its 2 nearest centroids show
+    if (topicCentroids?.length > 0) {
+      const nothingSelected =
+        activeTopics.size === 0 &&
+        nearestTopicIds.size === 0 &&
+        activeWords.length === 0;
+      const visibleCentroids = nothingSelected
+        ? topicCentroids
+        : topicCentroids.filter(c =>
+          activeTopics.has(c.id) || nearestTopicIds.has(c.id)
+        );
+
+      if (visibleCentroids.length > 0) {
+        result.push({
+          type: 'scatter3d', mode: 'markers',
+          name: 'topic centroids',
+          x: visibleCentroids.map(c => c.x),
+          y: visibleCentroids.map(c => c.y),
+          z: visibleCentroids.map(c => c.z),
+          marker: {
+            color: visibleCentroids.map(c => lightenColor(topicColorMap[c.id] ?? '#888', 0.55)),
+            size: 6,
+            opacity: 0.85,
+            symbol: 'circle',
+            line: {
+              width: 1.5,
+              color: visibleCentroids.map(c => topicColorMap[c.id] ?? '#888'),
+            },
+          },
+          customdata: visibleCentroids.map(c => ({
+            id: c.id,
+            words: c.words?.slice(0, 5).join(', ') ?? '',
+          })),
+          hovertemplate: 'Topic %{customdata.id}<br>%{customdata.words}<extra></extra>',
+          showlegend: false,
+        });
+      }
+    }
+
+    // ── Word trajectories ─────────────────────────────────────────────────
+    activeWords.forEach(({ word, color, trajectory, nearest_topics }) => {
       if (!trajectory || trajectory.length === 0) return;
 
       const total = trajectory.length;
 
-      const labelColors = trajectory.map((_, i) => {
-        if (i === 0) return EARLY_COLOR;
-        if (i === total - 1) return color;
-        return '#888';
-      });
+      const labels = trajectory.map((p, i) =>
+        i === total - 1 ? `${word}  (${p.period})` : p.period
+      );
 
-      const labels = trajectory.map((p, i) => {
-        if (i === total - 1) return `${word}  (${p.period})`;
-        return p.period;
-      });
+      // Nearest topic lines — one trace per line so each can be styled
+      // independently and appear in the legend.
+      //   1st nearest: solid, width 2.5, topic colour
+      //   2nd nearest: dotted, width 1.5, topic colour
+      // Legend shows one ghost entry per rank summarising the convention.
+      if (nearest_topics) {
+        let addedLegendFirst = false;
+        let addedLegendSecond = false;
 
-      // entropy differs per time point now — read from each trajectory point's z
+        trajectory.forEach((pt) => {
+          const periodNearest = nearest_topics[pt.period] ?? [];
+          periodNearest.forEach(({ id }, rank) => {
+            const centroid = centroidPosMap[id];
+            if (!centroid) return;
+            const topicColor = topicColorMap[id] ?? '#888';
+            const isFirst = rank === 0;
+
+            // One legend ghost entry per rank, per word
+            const showThisInLegend = isFirst ? !addedLegendFirst : !addedLegendSecond;
+            if (isFirst) addedLegendFirst = true;
+            else addedLegendSecond = true;
+
+            result.push({
+              type: 'scatter3d',
+              mode: 'lines',
+              name: isFirst
+                ? `${word} → nearest topic`
+                : `${word} → 2nd topic`,
+              x: [pt.x, centroid.x],
+              y: [pt.y, centroid.y],
+              z: [pt.z, centroid.z],
+              line: {
+                color: topicColor,
+                width: isFirst ? 2.5 : 1.5,
+                dash: isFirst ? 'solid' : 'dot',
+              },
+              opacity: isFirst ? 0.7 : 0.45,
+              showlegend: showThisInLegend,
+              hoverinfo: 'skip',
+            });
+          });
+        });
+      }
+
+      // Main word trajectory
       result.push({
         type: 'scatter3d',
         mode: 'lines+markers+text',
@@ -132,28 +231,43 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
         text: labels,
         textposition: 'top center',
         textfont: {
-          size: trajectory.map((_, i) => i === total - 1 ? 13 : 11),
-          color: labelColors,
+          size: trajectory.map((_, i) => i === total - 1 ? 14 : 12),
+          color: '#111111',
         },
-        line: { color, width: 3 },
+        line: { color, width: 4 },
         marker: {
           color: trajectory.map((_, i) => total <= 1 ? 0 : i / (total - 1)),
-          colorscale: [[0, EARLY_COLOR], [1, LATE_COLOR]],
-          size: trajectory.map((_, i) => i === total - 1 ? 10 : 8),
-          line: { width: 1.5, color: 'white' },
+          colorscale: [[0, darkenColor(EARLY_COLOR, 0.25)], [1, darkenColor(LATE_COLOR, 0.25)]],
+          size: trajectory.map((_, i) => i === total - 1 ? 12 : 10),
+          line: { width: 2, color: 'white' },
         },
-        customdata: trajectory.map(p => ({
-          type: 'word',
-          word,
-          period: p.period,
-          entropy: p.z,
-        })),
-        hovertemplate: `<b>${word}</b><br>%{customdata.period}<br>entropy: %{customdata.entropy:.3f}<extra></extra>`,
+        customdata: trajectory.map(p => {
+          const nearestList = nearest_topics?.[p.period] ?? [];
+          const t1 = nearestList[0];
+          const t2 = nearestList[1];
+          return {
+            word,
+            period: p.period,
+            entropy: p.entropy ?? 0,
+            t1_id: t1?.id ?? '—',
+            t1_dist: t1 ? t1.distance.toFixed(3) : '—',
+            t2_id: t2?.id ?? '—',
+            t2_dist: t2 ? t2.distance.toFixed(3) : '—',
+          };
+        }),
+        hovertemplate: [
+          `<b>%{customdata.word}</b>  (%{customdata.period})`,
+          `variability: %{customdata.entropy:.3f}`,
+          `nearest topic: %{customdata.t1_id}  (dist %{customdata.t1_dist})`,
+          `2nd topic: %{customdata.t2_id}  (dist %{customdata.t2_dist})`,
+          `<extra></extra>`,
+        ].join('<br>'),
       });
     });
 
     return result;
-  }, [activeWords, documents, activeTopics, topicColorMap, earlyPeriod, latePeriod]);
+  }, [activeWords, documents, topicCentroids, activeTopics, topicColorMap,
+    earlyPeriod, latePeriod, centroidPosMap, focusedWord]);
 
   const hasData = activeWords.length > 0 || documents?.length > 0;
 
@@ -170,20 +284,18 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
     );
   }
 
+  // Plotly-default style — light blue-grey panes, white grid lines
   const axisStyle = {
     showgrid: true,
-    gridcolor: '#888',
-    gridwidth: 2,
-    zeroline: true,
-    zerolinecolor: '#444',
-    zerolinewidth: 2,
-    showline: true,
-    linecolor: '#333',
-    linewidth: 3,
-    tickfont: { size: 10, color: '#333' },
-    titlefont: { size: 11, color: '#222' },
-    backgroundcolor: 'rgba(225,223,218,0.6)',
+    gridcolor: 'white',
+    gridwidth: 1,
+    zeroline: false,
+    showline: false,
+    tickfont: { size: 10, color: '#444' },
+    titlefont: { size: 11, color: '#333' },
+    backgroundcolor: 'rgb(229,236,246)',
     showbackground: true,
+    showspikes: false,   // disables the confusing spike/box lines on hover
   };
 
   return (
@@ -205,11 +317,12 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
             xaxis: { ...axisStyle, title: 'PC 1' },
             yaxis: { ...axisStyle, title: 'PC 2' },
             zaxis: { ...axisStyle, title: 'PC 3' },
-            bgcolor: 'rgba(235,233,228,0.3)',
+            bgcolor: 'rgb(229,236,246)',
             camera: {
-              eye: { x: 1.4, y: 1.4, z: 0.8 },
+              eye: { x: 2.0, y: 2.0, z: 1.2 },
               up: { x: 0, y: 0, z: 1 },
               center: { x: 0, y: 0, z: 0 },
+              projection: { type: 'perspective' },
             },
           },
           margin: { l: 0, r: 0, t: 0, b: 0 },
@@ -224,10 +337,11 @@ export default function PlotCanvas({ activeWords, topics, documents, activeTopic
         useResizeHandler
         style={{ width: '100%', height: '100%' }}
         onClick={(e) => {
-          if (!e.points.length) return;
+          if (!e.points?.length) return;
           const pt = e.points[0];
-          if (pt.customdata?.type === 'topic' && pt.customdata.id !== -1) {
-            onTopicClick(pt.customdata.id);
+          // Only fire for word trajectory points (customdata.type === 'word')
+          if (pt.customdata?.word && onWordSelect) {
+            onWordSelect(pt.customdata.word);
           }
         }}
       />

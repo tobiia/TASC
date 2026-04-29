@@ -2,8 +2,8 @@
 // Root component — owns all state, fetches data, passes props down.
 // Layout: left panel (words) | centre (plot + occurrences) | right panel (topics)
 
-import { useState, useEffect, useRef, Component } from 'react';
-import { fetchWords, fetchWord, fetchTopics, fetchDocuments, fetchHealth } from './api';
+import { useState, useEffect, useRef, useMemo, Component } from 'react';
+import { fetchWords, fetchWord, fetchTopics, fetchDocuments, fetchHealth, fetchTopicCentroids } from './api';
 import WordList from './components/WordList';
 import TopicList from './components/TopicList';
 import PlotCanvas from './components/PlotCanvas';
@@ -45,6 +45,9 @@ export default function App() {
   // topics
   const [topics, setTopics] = useState([]);
 
+  // topic centroid 3D positions
+  const [topicCentroids, setTopicCentroids] = useState([]);
+
   // document vectors for 3D scatter
   const [documents, setDocuments] = useState([]);
 
@@ -54,10 +57,29 @@ export default function App() {
   // word whose occurrences are shown in the bottom bar
   const [selectedWord, setSelectedWord] = useState(null);
 
-  // set of highlighted topic IDs
-  const [activeTopics, setActiveTopics] = useState(new Set());
+  // word currently focused via plot click — drives halos in WordList + TopicList
+  const [focusedWord, setFocusedWord] = useState(null);
 
-  // 'polling' while waiting for backend | 'loading' while fetching data | 'ready' | 'error'
+  // Topics derived from active words — cannot be manually deselected
+  const autoTopics = useMemo(() => {
+    const ids = new Set();
+    activeWords.forEach(({ nearest_topics }) => {
+      if (!nearest_topics) return;
+      Object.values(nearest_topics).forEach(list =>
+        list.forEach(({ id }) => ids.add(id))
+      );
+    });
+    return ids;
+  }, [activeWords]);
+
+  // Topics the user has manually toggled on — independent of words
+  const [manualTopics, setManualTopics] = useState(new Set());
+
+  // Final set: union of auto + manual
+  const activeTopics = useMemo(() =>
+    new Set([...autoTopics, ...manualTopics]),
+    [autoTopics, manualTopics]
+  );
   const [phase, setPhase] = useState('polling');
   const [statusMessage, setStatusMessage] = useState('Waiting for backend…');
   const [loadError, setLoadError] = useState(null);
@@ -72,6 +94,7 @@ export default function App() {
           fetchWords().then(words => { if (!cancelled) setAllWords(words); }),
           fetchTopics().then(data => { if (!cancelled) setTopics(data); }),
           fetchDocuments().then(data => { if (!cancelled) setDocuments(data); }),
+          fetchTopicCentroids().then(data => { if (!cancelled) setTopicCentroids(data); }),
         ]);
         if (!cancelled) setPhase('ready');
       } catch (err) {
@@ -119,48 +142,42 @@ export default function App() {
     const alreadyActive = activeWords.find(w => w.word === word);
 
     if (alreadyActive) {
-      // removed from plot
       const remaining = activeWords.filter(w => w.word !== word);
       setActiveWords(remaining);
-
-      // if selected in the occurrence bar, switch to another word or clear
-      if (selectedWord === word) {
+      if (selectedWord === word)
         setSelectedWord(remaining.length > 0 ? remaining[remaining.length - 1].word : null);
-      }
+      if (focusedWord === word) setFocusedWord(null);
       return;
     }
-    // else, this is a new word selected
 
-    // pick next color
     const usedColors = activeWords.map(w => w.color);
     const color = WORD_COLORS.find(c => !usedColors.includes(c))
       ?? WORD_COLORS[activeWords.length % WORD_COLORS.length];
 
-    // add a placeholder entry straight away so the word appears selected
     setActiveWords(prev => [...prev, { word, color, trajectory: [], occurrences: [] }]);
     setSelectedWord(word);
 
-    // fetching data to fill in placeholder
     try {
       const data = await fetchWord(word);
       setActiveWords(prev =>
         prev.map(w =>
           w.word === word
-            ? { ...w, trajectory: data.trajectory, occurrences: data.occurrences }
+            ? { ...w, trajectory: data.trajectory, occurrences: data.occurrences, nearest_topics: data.nearest_topics ?? {} }
             : w
         )
       );
     } catch (err) {
       console.error(`Failed to load data for "${word}":`, err);
-      // remove the placeholder so the word doesn't appear stuck as selected
       setActiveWords(prev => prev.filter(w => w.word !== word));
       setSelectedWord(prev => prev === word ? null : prev);
     }
   }
 
-  // toggle a topic highlight on/off
+  // toggle a topic manually — only affects manualTopics
+  // auto topics (driven by words) cannot be toggled off this way
   function handleTopicClick(id) {
-    setActiveTopics(prev => {
+    if (autoTopics.has(id)) return; // word-driven topics are not manually toggleable
+    setManualTopics(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
@@ -176,8 +193,8 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>TASC - Topic-Aware Semantic Change</h1>
-        <span>Word embeddings over 2 time periods · Top2Vec topic clusters · Contextual Entropy as 3rd Dimension</span>
+        <h1>Lexical Semantic Change</h1>
+        <span>word embeddings over time · Top2Vec topic clusters · 3D PCA visualization</span>
       </header>
 
       {(phase === 'polling' || phase === 'loading') && (
@@ -201,6 +218,7 @@ export default function App() {
           words={allWords}
           activeColorMap={activeColorMap}
           onToggle={handleWordToggle}
+          focusedWord={focusedWord}
         />
 
         {/* Centre — the plot on top, occurrences bar on the bottom */}
@@ -209,9 +227,11 @@ export default function App() {
             <PlotCanvas
               activeWords={activeWords}
               topics={topics}
+              topicCentroids={topicCentroids}
               documents={documents}
               activeTopics={activeTopics}
-              onTopicClick={handleTopicClick}
+              focusedWord={focusedWord}
+              onWordSelect={(word) => setFocusedWord(prev => prev === word ? null : word)}
             />
           </ErrorBoundary>
           <OccurrenceBar
@@ -224,7 +244,16 @@ export default function App() {
         <TopicList
           topics={topics}
           activeTopics={activeTopics}
+          autoTopics={autoTopics}
           onSelect={handleTopicClick}
+          focusedWordNearestTopics={
+            focusedWord
+              ? activeWords.find(w => w.word === focusedWord)?.nearest_topics ?? null
+              : null
+          }
+          focusedWordColor={
+            focusedWord ? activeColorMap[focusedWord] ?? null : null
+          }
         />
 
       </div>

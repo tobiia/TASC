@@ -45,6 +45,15 @@ export async function fetchTopics() {
   }
 }
 
+export async function fetchTopicCentroids() {
+  try {
+    const res = await axios.get(`${BASE}/topic-centroids`);
+    return res.data.topic_centroids;
+  } catch (err) {
+    throw apiError('Failed to load topic centroids', err);
+  }
+}
+
 export async function fetchDocuments() {
   try {
     const res = await axios.get(`${BASE}/documents`);

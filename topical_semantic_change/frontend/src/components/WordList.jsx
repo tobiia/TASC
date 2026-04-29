@@ -1,8 +1,18 @@
 // left panel
 // shows all available words + toggle
+//
+// HALO BEHAVIOUR
+// When a word point is clicked in the plot, App.jsx sets `focusedWord`.
+// The corresponding word item gets a coloured ring (halo) so the user
+// can see which word's topic connections are currently highlighted.
 
-export default function WordList({ words, activeColorMap, onToggle }) {
-  // activeColorMap = obj, { bank: "###", ... }
+export default function WordList({ words, activeColorMap, onToggle, focusedWord }) {
+  const sortedWords = [...words].sort((a, b) => {
+    const aActive = a in activeColorMap ? 0 : 1;
+    const bActive = b in activeColorMap ? 0 : 1;
+    return aActive - bActive;
+  });
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -15,14 +25,19 @@ export default function WordList({ words, activeColorMap, onToggle }) {
           <div className="empty-state">Loading words...</div>
         )}
 
-        {words.map((word) => {
+        {sortedWords.map((word) => {
           const isActive = word in activeColorMap;
+          const isFocused = word === focusedWord;
           const color = activeColorMap[word];
 
           return (
             <div
               key={word}
               className={`word-item ${isActive ? 'active' : ''}`}
+              style={isFocused && color ? {
+                outline: `2px solid ${color}`,
+                outlineOffset: '2px',
+              } : {}}
               onClick={() => onToggle(word)}
             >
               <span>{word}</span>

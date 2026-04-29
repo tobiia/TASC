@@ -3,7 +3,11 @@ import os
 
 RANDOM_SEED = 42
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PORT_BACKEND = 8000
+
+PORT_FRONTEND = 5173
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 SRC_DIR = PROJECT_ROOT / "topical_semantic_change"
 
@@ -30,9 +34,9 @@ MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 TOP2VEC_MODEL = "all-mpnet-base-v2"
 # Maximum number of sentences fed to Top2Vec for topic modelling.
-MAX_TOPIC_SENTENCES = 50000
+MAX_TOPIC_SENTENCES = 100_000
 # Maximum number of sentence points rendered in the 3D plot.
 # Sentences beyond this limit are still available in the occurrence bar.
-MAX_RENDER_SENTENCES = 10000
+MAX_RENDER_SENTENCES = 10_000
 TOP2VEC_NUM_TOPICS = None
 TOP2VEC_WORKERS = os.cpu_count() or 4

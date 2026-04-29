@@ -5,10 +5,7 @@ from sklearn.decomposition import PCA
 
 from lexical_semantic_change.extraction.word_cache import run_cache as run_word_cache
 from lexical_semantic_change.representation.embed_cache import run_cache
-from .config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME
-
-CORPUS1_NAME = Path(CORPUS1).stem  # "1860s"
-CORPUS2_NAME = Path(CORPUS2).stem  # "1950s"
+from ...config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME
 
 
 def _load_terms(path: Path):
@@ -58,9 +55,12 @@ def load_data():
             raise FileNotFoundError(f"TERMS_FILE not found: {TERMS_FILE}")
         terms = _load_terms(terms_path)
 
+    corpus1_name = Path(CORPUS1).stem
+    corpus2_name = Path(CORPUS2).stem
+
     try:
         x_words, y_words = run_word_cache(
-            CORPUS1, CORPUS2, f"{CORPUS1_NAME}_{CORPUS2_NAME}", terms=terms
+            CORPUS1, CORPUS2, f"{corpus1_name}_{corpus2_name}", terms=terms
         )
     except Exception as e:
         raise RuntimeError(f"Failed to extract words from corpora: {e}") from e
@@ -74,7 +74,7 @@ def load_data():
     try:
         # REVIEW - should remove layer specification
         (x_embeds, _, x_lemma_sentences), (y_embeds, _, y_lemma_sentences) = run_cache(
-            x_words, y_words, f"{CORPUS1_NAME}_{CORPUS2_NAME}", MODEL_NAME, layer=11
+            x_words, y_words, f"{corpus1_name}_{corpus2_name}", MODEL_NAME, layer=11
         )
     except Exception as e:
         raise RuntimeError(f"Failed to compute embeddings: {e}") from e
@@ -96,8 +96,8 @@ def load_data():
     }
 
     word_occurrences = {
-        w: [{"text": s, "date": CORPUS1_NAME} for s in x_lemma_sentences.get(w, [])]
-        + [{"text": s, "date": CORPUS2_NAME} for s in y_lemma_sentences.get(w, [])]
+        w: [{"text": s, "date": corpus1_name} for s in x_lemma_sentences.get(w, [])]
+        + [{"text": s, "date": corpus2_name} for s in y_lemma_sentences.get(w, [])]
         for w in words
     }
 
@@ -229,16 +229,19 @@ def get_word_trajectory(word, word_means, pca, word_entropies=None):
         if word_entropies is not None:
             entropy_c1, entropy_c2 = word_entropies.get(word, (0.0, 0.0))
 
+        corpus1_name = Path(CORPUS1).stem
+        corpus2_name = Path(CORPUS2).stem
+
         return [
             {
-                "period": CORPUS1_NAME,
+                "period": corpus1_name,
                 "x": float(coords[0][0]),
                 "y": float(coords[0][1]),
                 "z": float(coords[0][2]),
                 "entropy": float(entropy_c1),
             },
             {
-                "period": CORPUS2_NAME,
+                "period": corpus2_name,
                 "x": float(coords[1][0]),
                 "y": float(coords[1][1]),
                 "z": float(coords[1][2]),

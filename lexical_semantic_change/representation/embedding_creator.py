@@ -479,7 +479,10 @@ class XLLexemeEmbeddingCreator(BaseEmbeddingCreator):
         accumulators: dict = {}
 
         embeds = self.model.encode(
-            examples, batch_size=self.batch_size, show_progress_bar=True
+            examples,
+            batch_size=self.batch_size,
+            show_progress_bar=True,
+            normalize_embeddings=True,
         )
         for i, word_embed in enumerate(embeds):
             lemma, sent = meta[i]

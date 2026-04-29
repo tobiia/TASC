@@ -13,11 +13,7 @@ import signal
 import time
 import os
 from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FRONTEND_DIR = PROJECT_ROOT / "topical_semantic_change" / "frontend"
-
-PORTS = {"backend": 8000, "frontend": 5173}
+from .config import PORT_BACKEND, PORT_FRONTEND, PROJECT_ROOT, FRONTEND
 
 
 def _pid_on_port(port):
@@ -55,15 +51,15 @@ def _port_in_use(port):
 
 def _check_ports():
     blocked = []
-    for name, port in PORTS.items():
+    for port in [PORT_BACKEND, PORT_FRONTEND]:
         if _port_in_use(port):
-            blocked.append((name, port, _pid_on_port(port)))
+            blocked.append((port, _pid_on_port(port)))
 
     if not blocked:
         return
 
-    for name, port, pid in blocked:
-        line = f"Port {port} ({name}) is already in use"
+    for port, pid in blocked:
+        line = f"Port {port} is already in use"
         if pid:
             if sys.platform == "win32":
                 kill_cmd = f"taskkill /F /T /PID {pid}"
@@ -147,7 +143,7 @@ def main():
     frontend = _popen(
         "npm (https://nodejs.org)",
         [npm, "run", "dev"],
-        cwd=FRONTEND_DIR,
+        cwd=FRONTEND,
         shell=(sys.platform == "win32"),
     )
 

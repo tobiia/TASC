@@ -14,6 +14,10 @@ hf_logging.set_verbosity_error()
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s\n"
+)
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------
@@ -47,10 +51,6 @@ def main():
     parser.add_argument("-l", "--label", help="optional label for output file")
     args = parser.parse_args()
 
-    # Setup logging
-    logging.basicConfig(
-        level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s"
-    )
     logger.info("Beginning measurement of LEXICAL SEMANTIC CHANGE")
 
     # Validate paths

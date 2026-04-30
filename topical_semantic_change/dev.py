@@ -35,6 +35,17 @@ def _pid_on_port(port):
     return None
 
 
+def _wait_for_port(port, timeout=300, interval=0.25):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+                return True
+        except OSError:
+            time.sleep(interval)
+    return False
+
+
 def _port_in_use(port):
     for host in ("127.0.0.1", "::1"):
         try:
@@ -139,6 +150,9 @@ def main():
         ],
         cwd=PROJECT_ROOT,
     )
+
+    if not _wait_for_port(PORT_BACKEND):
+        print(f"Backend did not start within 3m — suggest restarting")
 
     frontend = _popen(
         "npm (https://nodejs.org)",

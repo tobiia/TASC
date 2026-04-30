@@ -215,7 +215,7 @@ def _load_or_compute(
         logger.info(f"Loading {cache_domain} embeddings from cache...")
         term_candidates, sentence_cache, lemma_sentences = cache.load_cache()
         logger.info(
-            f"EMBEDDING CACHE ({cache_domain}): {len(lemma_sentences)} initial, {len(term_candidates)} after embeddings"
+            f"({cache_domain}): {len(lemma_sentences)} initial, {len(term_candidates)} after embeddings"
         )
     else:
         logger.info(f"Computing embeddings for {cache_domain}...")

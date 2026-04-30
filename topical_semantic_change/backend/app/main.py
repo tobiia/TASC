@@ -15,15 +15,28 @@ from .core import (
     get_word_trajectory,
     compute_all_entropies,
     get_nearest_topics,
-    MODEL_NAME,
 )
-from .topic import train_top2vec, get_topics, group_sentences, assign_sentence_topics
-
-from .config import MAX_TOPIC_SENTENCES, MAX_RENDER_SENTENCES, RANDOM_SEED
+from .topic import train_top2vec, get_topics, assign_sentence_topics
 from pathlib import Path
-from .config import CORPUS1, CORPUS2
+from ...config import (
+    CORPUS1,
+    CORPUS2,
+    MAX_TOPIC_SENTENCES,
+    MAX_RENDER_SENTENCES,
+    RANDOM_SEED,
+)
 
+logging.basicConfig(
+    level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s\n"
+)
 logger = logging.getLogger(__name__)
+from transformers.utils import logging as hf_logging
+
+hf_logging.set_verbosity_error()
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("top2vec").setLevel(logging.WARNING)
+logging.getLogger("top2vec").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
 # populated during lifespan startup
 word_list = []
@@ -47,6 +60,12 @@ async def lifespan(app: FastAPI):
     global all_sentences, sentence_topic, sentence_embeddings, documents_payload
     global topic_centroids_payload, pca, top2vec_model, startup_error
 
+    # Prevent uvicorn log records from reaching the root handler a second time.
+    # uvicorn calls dictConfig (which sets propagate=True) after module import,
+    # so this must run inside lifespan rather than at module level.
+    logging.getLogger("uvicorn").propagate = False
+    logging.getLogger("uvicorn.error").propagate = False
+
     try:
         logger.info("Loading data...")
         word_list, word_means, word_occurrences, all_sentences, x_embeds, y_embeds = (
@@ -58,11 +77,11 @@ async def lifespan(app: FastAPI):
         word_entropies = compute_all_entropies(word_list, x_embeds, y_embeds)
         logger.info(f"Computed entropy for {len(word_entropies)} words")
 
-        logger.info("Grouping sentences into mega-documents...")
-        # Randomly subsample for Top2Vec if corpus exceeds limit.
-        # Seed is fixed so the same corpus always picks the same sentences
-        # on a fresh run (before the cache exists). Word embeddings and the
-        # occurrence bar always use the full all_sentences list unchanged.
+        logger.info("Preparing sentence-level documents for Top2Vec...")
+        # Pass individual sentences directly — no grouping needed.
+        # Each sentence is its own document, giving Top2Vec coherent
+        # single-theme input rather than mixed mega-documents.
+        # This significantly improves topic coherence on shuffled corpora.
         rng = np.random.default_rng(seed=RANDOM_SEED)
         if len(all_sentences) > MAX_TOPIC_SENTENCES:
             topic_indices = np.sort(
@@ -77,23 +96,75 @@ async def lifespan(app: FastAPI):
             topic_indices = np.arange(len(all_sentences))
             topic_sentences = all_sentences
 
-        groups, mega_doc_texts = group_sentences(topic_sentences, MODEL_NAME)
+        # Build sentence embedding lookup from TermSummary.sent_embeds.
+        # sent_embeds rows are parallel to word_occurrences entries so we can
+        # zip them directly. The same sentence always yields the same embedding
+        # since sentence_embeddings[idx] is looked up by unique-sentence index
+        # in embedding_creator.py — deduplication here is safe.
+        logger.info("Building sentence embedding lookup from cached word embeddings...")
+        sent_embed_lookup: dict[str, np.ndarray] = {}
+        corpus1_name = Path(CORPUS1).stem
+        corpus2_name = Path(CORPUS2).stem
+        for w in word_list:
+            for corpus_embeds, corpus_name in [
+                (x_embeds, corpus1_name),
+                (y_embeds, corpus2_name),
+            ]:
+                # x and y_embeds are dict[word, TermSummary]
+                if w not in corpus_embeds:
+                    continue
+                term = corpus_embeds[w]
+                occ_sents = [
+                    o["text"] for o in word_occurrences[w] if o["date"] == corpus_name
+                ]
+                assert len(occ_sents) == len(term.sent_embeds), (
+                    f"Length mismatch for '{w}' in {corpus_name}: "
+                    f"{len(occ_sents)} occ_sents vs {len(term.sent_embeds)} sent_embeds"
+                )
+                for sent, emb in zip(occ_sents, term.sent_embeds):
+                    if sent not in sent_embed_lookup:
+                        sent_embed_lookup[sent] = emb
+
+        # Build ordered embedding matrix matching topic_sentences order.
+        # Sentences without a cached embedding are omitted — Top2Vec requires
+        # precomputed_embeddings to be exactly len(documents) rows, so we
+        # filter topic_sentences to only those we have embeddings for.
+        covered = [
+            (s, sent_embed_lookup[s]) for s in topic_sentences if s in sent_embed_lookup
+        ]
+        if len(covered) < len(topic_sentences):
+            missing = len(topic_sentences) - len(covered)
+            logger.warning(
+                f"{missing} / {len(topic_sentences)} sentences have no cached "
+                f"embedding and will be excluded from Top2Vec"
+            )
+        topic_sentences_covered = [s for s, _ in covered]
+        sent_embed_matrix = np.vstack([e for _, e in covered])
+
+        # Remap topic_indices to match the filtered sentence list
+        sent_to_global = {s: i for i, s in enumerate(all_sentences)}
+        topic_indices = np.array([sent_to_global[s] for s in topic_sentences_covered])
+
         logger.info(
-            f"Grouped {len(topic_sentences)} sentences into "
-            f"{len(mega_doc_texts)} documents"
+            f"Built embedding matrix: {sent_embed_matrix.shape} "
+            f"for {len(topic_sentences_covered)} sentences"
         )
 
         logger.info("Training Top2Vec model...")
         cache_domain = f"{Path(CORPUS1).stem}_{Path(CORPUS2).stem}"
-        top2vec_model = train_top2vec(mega_doc_texts, cache_domain=cache_domain)
+        top2vec_model = train_top2vec(
+            topic_sentences_covered,
+            cache_domain=cache_domain,
+            precomputed_embeddings=sent_embed_matrix,
+        )
         logger.info(
             f"Trained Top2Vec model with {top2vec_model.get_num_topics()} topics"
         )
 
         logger.info("Assigning sentence topics...")
-        # assign_sentence_topics returns indices into topic_sentences (0..N-1).
-        # Remap to global all_sentences indices using topic_indices.
-        raw_topic, raw_embeddings = assign_sentence_topics(top2vec_model, groups)
+        raw_topic, raw_embeddings = assign_sentence_topics(
+            top2vec_model, topic_sentences_covered
+        )
         sentence_topic = {
             int(topic_indices[local_idx]): topic_id
             for local_idx, topic_id in raw_topic.items()

@@ -17,9 +17,6 @@ import { useMemo } from 'react';
 import Plot from '../plotly';
 import { TOPIC_COLORS } from './TopicList';
 
-const EARLY_COLOR = '#378ADD';
-const LATE_COLOR = '#D85A30';
-
 /** Lighten a hex colour toward white by `amount` (0–1). */
 function lightenColor(hex, amount = 0.5) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -29,14 +26,6 @@ function lightenColor(hex, amount = 0.5) {
   return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** Darken a hex colour toward black by `amount` (0–1). */
-function darkenColor(hex, amount = 0.45) {
-  const n = parseInt(hex.replace('#', ''), 16);
-  const r = Math.round(((n >> 16) & 0xff) * (1 - amount));
-  const g = Math.round(((n >> 8) & 0xff) * (1 - amount));
-  const b = Math.round((n & 0xff) * (1 - amount));
-  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
-}
 
 export default function PlotCanvas({
   activeWords,
@@ -44,20 +33,10 @@ export default function PlotCanvas({
   topicCentroids,
   documents,
   activeTopics,
+  showDocuments,
   focusedWord,     // word string currently focused via plot click
   onWordSelect,
 }) {
-  const [earlyPeriod, latePeriod] = useMemo(() => {
-    const traj = activeWords.find(w => w.trajectory?.length >= 2)?.trajectory;
-    if (traj) return [traj[0].period, traj[traj.length - 1].period];
-    if (documents?.length > 0) {
-      const seen = [...new Set(documents.map(d => d.period).filter(Boolean))].sort();
-      if (seen.length >= 2) return [seen[0], seen[1]];
-      if (seen.length === 1) return [seen[0], seen[0]];
-    }
-    return [null, null];
-  }, [activeWords, documents]);
-
   const topicColorMap = useMemo(() =>
     Object.fromEntries(topics.map((t, i) => [t.id, TOPIC_COLORS[i % TOPIC_COLORS.length]])),
     [topics]
@@ -85,26 +64,8 @@ export default function PlotCanvas({
       return ids;
     })();
 
-    // ── Legend ghost markers ──────────────────────────────────────────────
-    if (earlyPeriod && latePeriod) {
-      result.push({
-        type: 'scatter3d', mode: 'markers',
-        name: earlyPeriod,
-        x: [null], y: [null], z: [null],
-        marker: { color: EARLY_COLOR, size: 8, symbol: 'circle' },
-        showlegend: true, hoverinfo: 'skip',
-      });
-      result.push({
-        type: 'scatter3d', mode: 'markers',
-        name: latePeriod,
-        x: [null], y: [null], z: [null],
-        marker: { color: LATE_COLOR, size: 8, symbol: 'circle' },
-        showlegend: true, hoverinfo: 'skip',
-      });
-    }
-
-    // ── Document cloud — only visible when a topic is selected ───────────
-    if (documents?.length > 0 && activeTopics.size > 0) {
+    // ── Document cloud — only visible when a topic is selected and not hidden ──
+    if (showDocuments && documents?.length > 0 && activeTopics.size > 0) {
       for (const topicId of activeTopics) {
         const color = topicColorMap[topicId] ?? '#888';
         const topicDocs = documents.filter(d => d.topic === topicId);
@@ -148,8 +109,8 @@ export default function PlotCanvas({
           z: visibleCentroids.map(c => c.z),
           marker: {
             color: visibleCentroids.map(c => lightenColor(topicColorMap[c.id] ?? '#888', 0.55)),
-            size: 6,
-            opacity: 0.85,
+            size: 5,
+            opacity: 0.60,
             symbol: 'circle',
             line: {
               width: 1.5,
@@ -209,10 +170,10 @@ export default function PlotCanvas({
               z: [pt.z, centroid.z],
               line: {
                 color: topicColor,
-                width: isFirst ? 2.5 : 1.5,
-                dash: isFirst ? 'solid' : 'dot',
+                width: isFirst ? 2.5 : 3.5,
+                dash: isFirst ? 'solid' : 'dash',
               },
-              opacity: isFirst ? 0.7 : 0.45,
+              opacity: isFirst ? 0.4 : 0.5,
               showlegend: showThisInLegend,
               hoverinfo: 'skip',
             });
@@ -236,10 +197,9 @@ export default function PlotCanvas({
         },
         line: { color, width: 4 },
         marker: {
-          color: trajectory.map((_, i) => total <= 1 ? 0 : i / (total - 1)),
-          colorscale: [[0, darkenColor(EARLY_COLOR, 0.25)], [1, darkenColor(LATE_COLOR, 0.25)]],
-          size: trajectory.map((_, i) => i === total - 1 ? 12 : 10),
-          line: { width: 2, color: 'white' },
+          color,
+          size: trajectory.map((_, i) => i === total - 1 ? 14 : 12),
+          line: { width: 5, color: 'black' },
         },
         customdata: trajectory.map(p => {
           const nearestList = nearest_topics?.[p.period] ?? [];
@@ -266,8 +226,8 @@ export default function PlotCanvas({
     });
 
     return result;
-  }, [activeWords, documents, topicCentroids, activeTopics, topicColorMap,
-    earlyPeriod, latePeriod, centroidPosMap, focusedWord]);
+  }, [activeWords, documents, topicCentroids, activeTopics, showDocuments,
+    topicColorMap, centroidPosMap, focusedWord]);
 
   const hasData = activeWords.length > 0 || documents?.length > 0;
 

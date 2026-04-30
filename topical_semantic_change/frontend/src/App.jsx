@@ -10,10 +10,7 @@ import PlotCanvas from './components/PlotCanvas';
 import OccurrenceBar from './components/OccurrenceBar';
 
 // Colors assigned to words in order as they're added
-const WORD_COLORS = [
-  '#946bd6', '#d92970', '#2da5e6', '#621369', '#9ce194', '#BA7517',
-  '#E63946', '#2EC4B6', '#F77F00', '#4CC9F0', '#06A77D', '#E76F51',
-];
+const WORD_COLORS = ["#6450a8", "#638123", "#573bed", "#914c0f", "#1d7bc3", "#ce1365", "#2a8476", "#db3c23", "#134424", "#d518bd", "#382010", "#060369", "#807477", "#620932", "#b45a78", "#0e2450"];
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -59,6 +56,9 @@ export default function App() {
 
   // word currently focused via plot click — drives halos in WordList + TopicList
   const [focusedWord, setFocusedWord] = useState(null);
+
+  // Whether to show document embeddings or only topic centroids
+  const [showDocuments, setShowDocuments] = useState(true);
 
   // Topics derived from active words — cannot be manually deselected
   const autoTopics = useMemo(() => {
@@ -230,6 +230,7 @@ export default function App() {
               topicCentroids={topicCentroids}
               documents={documents}
               activeTopics={activeTopics}
+              showDocuments={showDocuments}
               focusedWord={focusedWord}
               onWordSelect={(word) => setFocusedWord(prev => prev === word ? null : word)}
             />
@@ -246,6 +247,8 @@ export default function App() {
           activeTopics={activeTopics}
           autoTopics={autoTopics}
           onSelect={handleTopicClick}
+          showDocuments={showDocuments}
+          onToggleDocuments={() => setShowDocuments(prev => !prev)}
           focusedWordNearestTopics={
             focusedWord
               ? activeWords.find(w => w.word === focusedWord)?.nearest_topics ?? null

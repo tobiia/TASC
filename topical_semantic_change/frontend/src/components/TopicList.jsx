@@ -9,11 +9,7 @@ import { useMemo } from 'react';
 // for that word — and renders a coloured ring (halo) around the 1st and 2nd
 // nearest topic items to visually connect the word to its topic neighbourhood.
 
-const TOPIC_COLORS = [
-  '#1D9E75', '#7F77DD', '#D85A30', '#378ADD', '#BA7517', '#993556',
-  '#2EC4B6', '#E76F51', '#8338EC', '#06A77D', '#F4A261', '#457B9D',
-  '#E63946', '#A8DADC', '#6A0572', '#F77F00', '#4CC9F0', '#B5179E',
-];
+const TOPIC_COLORS = ["#21f0b6", "#f55c71", "#6ff03f", "#c068fc", "#59a20c", "#fa2beb", "#d5ff97", "#b97eac", "#20d8fd", "#df8a1d", "#47a2f7", "#f1fb1a", "#8184fb", "#869764", "#ffc4de", "#24a475", "#f76015", "#ffe08c"];
 
 export default function TopicList({
   topics,
@@ -22,6 +18,8 @@ export default function TopicList({
   onSelect,
   focusedWordNearestTopics,
   focusedWordColor,
+  showDocuments,
+  onToggleDocuments,
 }) {
   // Flatten nearest topic ids across both periods, ranked 1st/2nd
   // so we can style them differently.
@@ -56,6 +54,23 @@ export default function TopicList({
       <div className="panel-header">
         <div className="panel-title">Topics</div>
         <p>Click to toggle · word-linked topics are locked</p>
+        <button
+          onClick={onToggleDocuments}
+          style={{
+            marginTop: '6px',
+            padding: '3px 8px',
+            fontSize: '11px',
+            cursor: 'pointer',
+            background: showDocuments ? '#e8f0fe' : '#f1f3f4',
+            border: '1px solid #ccc',
+            borderRadius: '4px',
+            color: '#333',
+            width: '100%',
+            textAlign: 'left',
+          }}
+        >
+          {showDocuments ? '● Full topic clusters' : '○ Only topic centroids'}
+        </button>
       </div>
 
       <div className="panel-body">

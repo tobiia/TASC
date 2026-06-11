@@ -1,11 +1,10 @@
+-e ./Top2Vec
+.
 spacy
 pandas
 numpy
 scikit-learn
 fastapi[standard]
 sentence-transformers
+transformers
 tqdm
-top2vec
-
-cd xl-lexeme, top2vec
-pip3 install .

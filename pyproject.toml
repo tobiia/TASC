@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "tsc"
+name = "tasc"
 version = "0.1.0"
 requires-python = ">=3.10"
 authors = [{ name = "Tobi Adesanya", email = "tobijadesanya@gmail.com" }]
@@ -15,13 +15,12 @@ dependencies = [
     "numpy",
     "pandas",
     "scikit-learn",
-    "torch",
     "transformers",
+    "sentence-transformers",
     "spacy",
-    "top2vec",
-    "fastapi",
-    "uvicorn[standard]",
+    "fastapi[standard]",
     "tqdm",
+    "setuptools < 82",
 ]
 
 [project.optional-dependencies]
@@ -30,7 +29,7 @@ dev = ["pytest", "black", "ruff"]
 [project.scripts]
 score = "lexical_semantic_change.assessment.scoring:main"
 run = "lexical_semantic_change.main:main"
-tasc = "topical_semantic_change.dev:main"
+tasc = "TASC.dev:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["lexical_semantic_change", "topical_semantic_change"]
+packages = ["lexical_semantic_change", "TASC"]

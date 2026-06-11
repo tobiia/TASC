@@ -62,8 +62,8 @@ def main():
     output_path = PROJECT_ROOT / f"eval_{args.label if args.label else ''}.csv"
 
     logger.info("Setting up...")
-    corpora_direct = Path(args.corpus1)
-    cache_domain = corpora_direct.parent.name
+    corpus_path = Path(args.corpus1)
+    corpora_label = corpus_path.parent.name
 
     try:
         gold_df = load_gold_set(args.words)
@@ -76,7 +76,7 @@ def main():
 
     try:
         x_words, y_words = run_word_cache(
-            args.corpus1, args.corpus2, cache_domain, terms=terms
+            args.corpus1, args.corpus2, corpora_label, terms=terms
         )
     except Exception as e:
         logger.error(f"Word cache failed: {e}", exc_info=True)
@@ -95,7 +95,7 @@ def main():
         logger.info(f"Model={model_name}; Layer={layer}")
         try:
             (x_embeds, _, _), (y_embeds, _, _) = run_cache(
-                x_words, y_words, cache_domain, model_name, layer=layer
+                x_words, y_words, corpora_label, model_name, layer=layer
             )
         except Exception as e:
             logger.error(

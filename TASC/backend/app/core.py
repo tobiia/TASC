@@ -55,12 +55,12 @@ def load_data():
             raise FileNotFoundError(f"TERMS_FILE not found: {TERMS_FILE}")
         terms = _load_terms(terms_path)
 
-    cache_domain = Path(CORPUS1).parent.name
+    corpora_label = Path(CORPUS1).parent.name
     corpus1_name = Path(CORPUS1).stem
     corpus2_name = Path(CORPUS2).stem
 
     try:
-        x_words, y_words = run_word_cache(CORPUS1, CORPUS2, cache_domain, terms=terms)
+        x_words, y_words = run_word_cache(CORPUS1, CORPUS2, corpora_label, terms=terms)
     except Exception as e:
         raise RuntimeError(f"Failed to extract words from corpora: {e}") from e
 
@@ -72,7 +72,7 @@ def load_data():
 
     try:
         (x_embeds, _, x_lemma_sentences), (y_embeds, _, y_lemma_sentences) = run_cache(
-            x_words, y_words, cache_domain, MODEL_NAME, layer=LAYER
+            x_words, y_words, corpora_label, MODEL_NAME, layer=LAYER
         )
     except Exception as e:
         raise RuntimeError(f"Failed to compute embeddings: {e}") from e

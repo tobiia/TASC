@@ -13,18 +13,18 @@ SRC_DIR = PROJECT_ROOT / "TASC"
 
 CACHE_DIR = PROJECT_ROOT / "cache"
 
-CORPUS_DIR = PROJECT_ROOT / "corpus"
+CORPORA_DIR = PROJECT_ROOT / "corpora"
 
 BACKEND = SRC_DIR / "backend"
 
 FRONTEND = SRC_DIR / "frontend"
 
 # ANCHOR - where to set paths for app data
-CORPUS1 = str(CORPUS_DIR / "semeval2020_ulscd_eng" / "corpus1")
-CORPUS2 = str(CORPUS_DIR / "semeval2020_ulscd_eng" / "corpus2")
+CORPUS1 = str(CORPORA_DIR / "semeval2020_ulscd_eng" / "corpus1")
+CORPUS2 = str(CORPORA_DIR / "semeval2020_ulscd_eng" / "corpus2")
 # TERMS_FILE can be None or path to a CSV or TXT file of terms to search for
 # None = extract all words (takes an extremely long time for long corpora)
-TERMS_FILE = str(CORPUS_DIR / "semeval2020_ulscd_eng" / "truth.csv")
+TERMS_FILE = str(CORPORA_DIR / "semeval2020_ulscd_eng" / "truth.csv")
 
 MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 LAYER = 11

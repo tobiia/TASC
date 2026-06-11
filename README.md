@@ -65,7 +65,7 @@ To use the sample dataset:
   - A text file containing the second corpus
   - *(Optional)* A CSV file named `truth.csv` containing at least one column named `lemma`. When provided, TASC will only create embeddings and visualize the listed lemmas. Useful when analyzing a predefined set of target terms or you want to increase the speed of the program.
 
-2. TASC expects a directory structure within the `corpus` directory similar to the following:
+2. TASC expects a directory structure within the `corpora` directory similar to the following:
 
   ```text
   tasc_data/
@@ -85,12 +85,12 @@ To use the sample dataset:
 ```py
 # if files are in a directory called "my_data"
 # change variables to ->
-CORPUS1 = str(CORPUS_DIR / "my_data" / "corpus1")
-CORPUS2 = str(CORPUS_DIR / "my_data" / "corpus2")
-TERMS_FILE = str(CORPUS_DIR / "my_data" / "truth.csv")
+CORPUS1 = str(CORPORA_DIR / "my_data" / "corpus1")
+CORPUS2 = str(CORPORA_DIR / "my_data" / "corpus2")
+TERMS_FILE = str(CORPORA_DIR / "my_data" / "truth.csv")
    ```
 
-Multiple diachronic datasets may be stored within the `corpus` directory for convenient organization and reuse. Ensure that each corpora directory has a unique name as cache identifiers are derived from these names. When switching to a different dataset, follow the same setup procedure and be sure to update the configuration paths in config.py (as described above).
+Multiple diachronic datasets may be stored within the `corpora` directory for convenient organization and reuse. Ensure that each corpora directory has a unique name as cache identifiers are derived from these names. When switching to a different dataset, follow the same setup procedure and be sure to update the configuration paths in config.py (as described above).
 
 ## Usage
 
@@ -117,9 +117,9 @@ Evaluate how word meanings change between two corpora using different models:
 
 ```bash
 # after pip install -e .
-scoring corpus/semeval2020_ulscd_eng/corpus1 \
-  corpus/semeval2020_ulscd_eng/corpus2 \
-  --gold corpus/semeval2020_ulscd_eng/truth.csv \
+scoring corpora/semeval2020_ulscd_eng/corpus1 \
+  corpora/semeval2020_ulscd_eng/corpus2 \
+  --gold corpora/semeval2020_ulscd_eng/truth.csv \
   --models sentence-transformers/all-mpnet-base-v2 pierluigic/xl-lexeme
 ```
 

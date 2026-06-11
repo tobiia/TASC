@@ -12,16 +12,16 @@ class EmbeddingCache:
     """Initialize WordCache.
 
     Args:
-        cache_domain: Name prefix for cache files
+        corpora_label: Name prefix for cache files
         model_name: Huggingface name for the desired model
         layer: Hidden layer to extract token embeddings (or None)
     """
 
-    def __init__(self, cache_domain, model_name, layer=None):
+    def __init__(self, corpora_label, model_name, layer=None):
         layer_str = f"_L{layer}" if layer is not None else ""
         # remove "/" from file name to avoid errors
         safe_name = model_name.replace("/", "_")
-        self.path = CACHE_DIR / f"{cache_domain}_{safe_name}{layer_str}.npz"
+        self.path = CACHE_DIR / f"{corpora_label}_{safe_name}{layer_str}.npz"
 
     def save_cache(self, term_candidates, sentence_cache, lemma_sentences):
 
@@ -197,7 +197,7 @@ class EmbeddingCache:
 
 
 def _load_or_compute(
-    cache: "EmbeddingCache", corpus: dict, model_name: str, layer, cache_domain: str
+    cache: "EmbeddingCache", corpus: dict, model_name: str, layer, corpora_label: str
 ):
     """Load cached embeddings or compute if not available.
 
@@ -206,19 +206,19 @@ def _load_or_compute(
         corpus: dict mapping word -> list of sentences
         model_name: Huggingface name for the desired model
         layer: Hidden layer to extract token embeddings (or None)
-        cache_domain: Name prefix for cache files
+        corpora_label: Name prefix for cache files
 
     Returns:
         (term_candidates, sentence_cache, lemma_sentences)
     """
     if cache.path.exists():
-        logger.info(f"Loading {cache_domain} embeddings from cache...")
+        logger.info(f"Loading {corpora_label} embeddings from cache...")
         term_candidates, sentence_cache, lemma_sentences = cache.load_cache()
         logger.info(
-            f"({cache_domain}): {len(lemma_sentences)} initial, {len(term_candidates)} after embeddings"
+            f"({corpora_label}): {len(lemma_sentences)} initial, {len(term_candidates)} after embeddings"
         )
     else:
-        logger.info(f"Computing embeddings for {cache_domain}...")
+        logger.info(f"Computing embeddings for {corpora_label}...")
         embedding_creator = create_embedding_creator(
             corpus, model_name=model_name, token_embedding_layer=layer
         )
@@ -226,12 +226,12 @@ def _load_or_compute(
             embedding_creator.create_embeddings()
         )
         if embedding_creator.error_terms:
-            err_path = PROJECT_ROOT / f"error_terms_{cache_domain}.csv"
+            err_path = PROJECT_ROOT / f"error_terms_{corpora_label}.csv"
             logger.warning(
                 f"Saving {len(embedding_creator.error_terms)} error terms to {err_path}"
             )
             save_set_to_csv(embedding_creator.error_terms, err_path)
-        logger.info(f"Caching {cache_domain} embeddings...")
+        logger.info(f"Caching {corpora_label} embeddings...")
         cache.save_cache(term_candidates, sentence_cache, lemma_sentences)
     return term_candidates, sentence_cache, lemma_sentences
 
@@ -239,7 +239,7 @@ def _load_or_compute(
 def run_cache(
     x_corpus: dict,
     y_corpus: dict,
-    cache_domain: str,
+    corpora_label: str,
     model_name: str,
     layer: int | None = None,
 ):
@@ -248,7 +248,7 @@ def run_cache(
     Args:
         x_corpus: dict mapping word -> list of sentences (corpus 1)
         y_corpus: dict mapping word -> list of sentences (corpus 2)
-        cache_domain: Name prefix for cache files
+        corpora_label: Name prefix for cache files
         model_name: Huggingface name for the desired model
         layer: Hidden layer to extract token embeddings (or None)
 
@@ -258,16 +258,16 @@ def run_cache(
         - x_cache, y_cache: sentence cache dicts
         - x_sentences, y_sentences: lemma -> sentences dicts
     """
-    logger.info(f"Processing embeddings: {cache_domain}")
+    logger.info(f"Processing embeddings: {corpora_label}")
 
-    cache_x = EmbeddingCache(f"{cache_domain}_c1", model_name, layer)
-    cache_y = EmbeddingCache(f"{cache_domain}_c2", model_name, layer)
+    cache_x = EmbeddingCache(f"{corpora_label}_c1", model_name, layer)
+    cache_y = EmbeddingCache(f"{corpora_label}_c2", model_name, layer)
 
     x_result = _load_or_compute(
-        cache_x, x_corpus, model_name, layer, f"{cache_domain}_c1"
+        cache_x, x_corpus, model_name, layer, f"{corpora_label}_c1"
     )
     y_result = _load_or_compute(
-        cache_y, y_corpus, model_name, layer, f"{cache_domain}_c2"
+        cache_y, y_corpus, model_name, layer, f"{corpora_label}_c2"
     )
 
     return x_result, y_result

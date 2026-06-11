@@ -64,8 +64,8 @@ def main():
     output_path = PROJECT_ROOT / f"results{'_' + args.label if args.label else ''}.csv"
 
     logger.info("Setting up...")
-    corpora_direct = Path(args.corpus1)
-    cache_domain = f"{corpora_direct.parent.name}"
+    corpus_path = Path(args.corpus1)
+    corpora_label = f"{corpus_path.parent.name}"
 
     # load terms
     words_path = Path(args.words)
@@ -85,7 +85,7 @@ def main():
 
     try:
         x_words, y_words = run_word_cache(
-            args.corpus1, args.corpus2, cache_domain, terms=terms
+            args.corpus1, args.corpus2, corpora_label, terms=terms
         )
     except Exception as e:
         logger.error(f"Word cache failed: {e}", exc_info=True)
@@ -96,7 +96,7 @@ def main():
 
     try:
         (x_embeds, _, _), (y_embeds, _, _) = run_cache(
-            x_words, y_words, cache_domain, args.model, layer=LAYER
+            x_words, y_words, corpora_label, args.model, layer=LAYER
         )
     except Exception as e:
         logger.error(f"Embedding cache failed: {e}", exc_info=True)

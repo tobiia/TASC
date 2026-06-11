@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+from pathlib import Path
 
 from .word_extractor import WordExtractor
 from ..config import CACHE_DIR
@@ -8,14 +9,14 @@ logger = logging.getLogger(__name__)
 
 
 class WordCache:
-    def __init__(self, cache_domain):
+    def __init__(self, corpora_label):
         """Initialize WordCache.
 
         Args:
-            cache_domain: Name prefix for cache files so
+            corpora_label: Name prefix for cache files so
                 the cache knows which to save to and load
         """
-        self.path = CACHE_DIR / f"{cache_domain}_words.npz"
+        self.path = CACHE_DIR / f"{corpora_label}_words.npz"
 
     def exists(self) -> bool:
         return self.path.exists()
@@ -68,6 +69,7 @@ def _load_or_compute(
         logger.info("Loading cached words for corpus...")
         corpus = cache.load()
     else:
+        Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
         extractor = WordExtractor(corpus_path)
         if terms is not None:
             logger.info(f"Targeted extraction of {len(terms)} terms from corpus...")
@@ -86,7 +88,7 @@ def _load_or_compute(
 def run_cache(
     corpus1_path,
     corpus2_path,
-    cache_domain,
+    corpora_label,
     terms: list[str] | None = None,
 ):
     """Extract and cache words from two corpora, returning shared words.
@@ -94,7 +96,7 @@ def run_cache(
     Args:
         corpus1_path: Path to first corpus directory
         corpus2_path: Path to second corpus directory
-        cache_domain: Name prefix for cache files
+        corpora_label: Name prefix for cache files
         terms: Optional list of terms to bypass full corpora extraction
             and search for using fast string matching. Cache is suffixed
             with '_targeted') to avoid confusion
@@ -103,17 +105,17 @@ def run_cache(
         (shared_corpus1, shared_corpus2): dicts mapping word -> list of sentences
     """
     if terms is not None:
-        c1_key = f"{cache_domain}_c1_targeted"
-        c2_key = f"{cache_domain}_c2_targeted"
+        c1_key = f"{corpora_label}_c1_targeted"
+        c2_key = f"{corpora_label}_c2_targeted"
     else:
-        c1_key = f"{cache_domain}_c1"
-        c2_key = f"{cache_domain}_c2"
+        c1_key = f"{corpora_label}_c1"
+        c2_key = f"{corpora_label}_c2"
 
     cache1 = WordCache(c1_key)
     cache2 = WordCache(c2_key)
 
     logger.info(
-        f"Processing corpora: {cache_domain}" + (" (targeted)" if terms else "")
+        f"Processing corpora: {corpora_label}" + (" (targeted)" if terms else "")
     )
 
     logger.info("Searching for corpus1 cached words...")

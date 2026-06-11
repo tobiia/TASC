@@ -6,7 +6,7 @@ SRC_DIR = PROJECT_ROOT / "lexical_semantic_change"
 
 MODELS_DIR = PROJECT_ROOT / "models"
 
-CORPUS_DIR = PROJECT_ROOT / "corpus"
+CORPORA_DIR = PROJECT_ROOT / "corpora"
 
 CACHE_DIR = PROJECT_ROOT / "cache"
 

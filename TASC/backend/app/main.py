@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI):
         # sent_embeds rows are parallel to word_occurrences entries so can zip
         logger.info("Building sentence embedding lookup from cached word embeddings...")
         sent_embed_lookup: dict[str, np.ndarray] = {}
-        cache_domain = Path(CORPUS1).parent.name
+        corpora_label = Path(CORPUS1).parent.name
         corpus1_name = Path(CORPUS1).stem
         corpus2_name = Path(CORPUS2).stem
         for w in word_list:
@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI):
         logger.info("Training Top2Vec model...")
         top2vec_model = train_top2vec(
             topic_sentences_covered,
-            cache_domain=cache_domain,
+            corpora_label=corpora_label,
             precomputed_embeddings=sent_embed_matrix,
         )
         logger.info(

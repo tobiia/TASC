@@ -57,12 +57,12 @@ def assign_sentence_topics(model, sentences):
 
 def train_top2vec(
     documents,
-    cache_domain: str = "corpus",
+    corpora_label: str = "corpora",
     precomputed_embeddings: np.ndarray | None = None,
 ):
     """Train a Top2Vec model on documents, with disk caching.
 
-    If a cached model exists for this cache_domain it is loaded directly,
+    If a cached model exists for this corpora_label it is loaded directly,
     skipping training entirely. Otherwise the model is trained and saved.
 
     When precomputed_embeddings is provided, Top2Vec skips its internal
@@ -72,7 +72,7 @@ def train_top2vec(
 
     Args:
         documents: list of sentence strings
-        cache_domain: identifies the corpus name, e.g. "semeval_2020"
+        corpora_label: identifies the corpus name, e.g. "semeval_2020"
         precomputed_embeddings: optional (n_docs, hidden_dim) L2-normalised
             ndarray. When provided, Top2Vec skips internal embedding.
 
@@ -82,7 +82,7 @@ def train_top2vec(
     if not documents:
         raise ValueError("Cannot train Top2Vec on empty document list")
 
-    cache_path = CACHE_DIR / f"top2vec_{cache_domain}.pkl"
+    cache_path = CACHE_DIR / f"top2vec_{corpora_label}.pkl"
 
     # ── Load from cache if available ──────────────────────────────────────
     if cache_path.exists():

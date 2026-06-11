@@ -1,6 +1,5 @@
 // App.jsx
-// Root component — owns all state, fetches data, passes props down.
-// Layout: left panel (words) | centre (plot + occurrences) | right panel (topics)
+// root component — owns all state, fetches data, passes props down
 
 import { useState, useEffect, useRef, useMemo, Component } from 'react';
 import { fetchWords, fetchWord, fetchTopics, fetchDocuments, fetchHealth, fetchTopicCentroids } from './api';
@@ -9,7 +8,6 @@ import TopicList from './components/TopicList';
 import PlotCanvas from './components/PlotCanvas';
 import OccurrenceBar from './components/OccurrenceBar';
 
-// Colors assigned to words in order as they're added
 const WORD_COLORS = ["#6450a8", "#638123", "#573bed", "#914c0f", "#1d7bc3", "#ce1365", "#2a8476", "#db3c23", "#134424", "#d518bd", "#382010", "#060369", "#807477", "#620932", "#b45a78", "#0e2450"];
 
 class ErrorBoundary extends Component {
@@ -54,13 +52,13 @@ export default function App() {
   // word whose occurrences are shown in the bottom bar
   const [selectedWord, setSelectedWord] = useState(null);
 
-  // word currently focused via plot click — drives halos in WordList + TopicList
+  // word currently focused via plot click
   const [focusedWord, setFocusedWord] = useState(null);
 
-  // Whether to show document embeddings or only topic centroids
+  // whether to show document embeddings or only topic centroids
   const [showDocuments, setShowDocuments] = useState(true);
 
-  // Topics derived from active words — cannot be manually deselected
+  // topics derived from active words —> cannot be manually deselected
   const autoTopics = useMemo(() => {
     const ids = new Set();
     activeWords.forEach(({ nearest_topics }) => {
@@ -72,10 +70,10 @@ export default function App() {
     return ids;
   }, [activeWords]);
 
-  // Topics the user has manually toggled on — independent of words
+  // topics the user has manually toggled on — independent of words
   const [manualTopics, setManualTopics] = useState(new Set());
 
-  // Final set: union of auto + manual
+  // final set = union of auto + manual
   const activeTopics = useMemo(() =>
     new Set([...autoTopics, ...manualTopics]),
     [autoTopics, manualTopics]
@@ -119,7 +117,7 @@ export default function App() {
         setLoadError(health.error ?? 'Backend failed to initialize');
         setPhase('error');
       } else {
-        // 'initializing' or 'unavailable' — keep polling
+        // "init" or "unavail" = keep polling
         setStatusMessage(
           health.status === 'unavailable'
             ? 'Waiting for backend…'
@@ -174,9 +172,8 @@ export default function App() {
   }
 
   // toggle a topic manually — only affects manualTopics
-  // auto topics (driven by words) cannot be toggled off this way
   function handleTopicClick(id) {
-    if (autoTopics.has(id)) return; // word-driven topics are not manually toggleable
+    if (autoTopics.has(id)) return; // word-driven topics are not manually clickable
     setManualTopics(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -213,7 +210,7 @@ export default function App() {
 
       <div className="main">
 
-        {/* Left panel — list of all words to choose from */}
+        {/* left panel = list of all words to choose from */}
         <WordList
           words={allWords}
           activeColorMap={activeColorMap}
@@ -221,7 +218,7 @@ export default function App() {
           focusedWord={focusedWord}
         />
 
-        {/* Centre — the plot on top, occurrences bar on the bottom */}
+        {/* centre = the plot on top, occurrences bar on the bottom */}
         <div className="centre">
           <ErrorBoundary>
             <PlotCanvas
@@ -241,7 +238,7 @@ export default function App() {
           />
         </div>
 
-        {/* Right panel — topic list */}
+        {/* right panel = topic list */}
         <TopicList
           topics={topics}
           activeTopics={activeTopics}

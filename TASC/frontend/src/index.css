@@ -12,7 +12,7 @@ body {
   color: #111;
 }
 
-/* ────────────────── shell/outer ────────────────── */
+/* *************** shell/outer *************** */
 
 .app {
   display: grid;
@@ -48,7 +48,7 @@ body {
   overflow: hidden;
 }
 
-/* ────────────────── panels ────────────────── */
+/* ****************** panels *************** */
 
 .panel {
   background: #fff;
@@ -89,7 +89,7 @@ body {
   padding: 6px;
 }
 
-/* ────────────────── word list ────────────────── */
+/* ************* word list ************* */
 
 .word-item {
   display: flex;
@@ -123,7 +123,7 @@ body {
   flex-shrink: 0;
 }
 
-/* ────────────────── topic list ────────────────── */
+/* ****************** topic list ***************** */
 
 .topic-item {
   padding: 8px 10px;
@@ -154,7 +154,7 @@ body {
   line-height: 1.5;
 }
 
-/* ────────────────── centre ────────────────── */
+/* ****************** centre ****************** */
 
 .centre {
   display: flex;
@@ -163,7 +163,7 @@ body {
   overflow: hidden;
 }
 
-/* ────────────────── graph ────────────────── */
+/* ****************** graph ****************** */
 
 .plot-area {
   flex: 1;
@@ -193,7 +193,7 @@ body {
   color: #999;
 }
 
-/* ────────────────── loading overlay ────────────────── */
+/* ************* loading overlay ************* */
 
 .loading-overlay {
   position: fixed;
@@ -222,7 +222,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* ────────────────── word occurrences ────────────────── */
+/* ********* word occurrences ********* */
 
 .info-bar {
   height: 120px;
@@ -295,7 +295,7 @@ body {
   font-weight: 700;
 }
 
-/* ────────────────── else ────────────────── */
+/* ****************** else ****************** */
 
 .empty-state {
   font-size: 12px;

@@ -2,22 +2,20 @@
 // Axes: X = PC 1, Y = PC 2, Z = PC 3
 //
 // NEAREST TOPIC LINES
-// When a word is active, two lines are drawn from each of its time-period
-// points to its nearest topic centroids:
-//   - 1st nearest: solid line, width 2.5, topic colour
-//   - 2nd nearest: dotted line, width 1.5, topic colour
+// when a word is active, two lines are drawn from each of its time-period
+// points to its 2 nearest topic centroids
 // Both appear in the legend under the word they belong to.
 //
 // WORD SELECTION / HALO
-// Clicking a word point in the plot calls onWordSelect(word), which App.jsx
-// uses to set `focusedWord`. TopicList and WordList both receive focusedWord
+// clicking a word point in the plot calls onWordSelect(word), which App.jsx
+// uses to set "focusedWord". TopicList and WordList both receive focusedWord
 // and apply a halo ring to the two nearest topics / the word itself.
 
 import { useMemo } from 'react';
 import Plot from '../plotly';
 import { TOPIC_COLORS } from './TopicList';
 
-/** Lighten a hex colour toward white by `amount` (0–1). */
+/** lighten/move colour toward white by "amount" (0–1). */
 function lightenColor(hex, amount = 0.5) {
   const n = parseInt(hex.replace('#', ''), 16);
   const r = Math.round(((n >> 16) & 0xff) + (255 - ((n >> 16) & 0xff)) * amount);
@@ -51,7 +49,7 @@ export default function PlotCanvas({
   const traces = useMemo(() => {
     const result = [];
 
-    // Compute nearest topic ids for the focused word inline so the linter
+    // compute nearest topic ids for the focused word inline so the linter
     // can see the variable is used within the same useMemo scope.
     const nearestTopicIds = (() => {
       if (!focusedWord) return new Set();
@@ -64,7 +62,7 @@ export default function PlotCanvas({
       return ids;
     })();
 
-    // ── Document cloud — only visible when a topic is selected and not hidden ──
+    // DOC CLOUD -> only visible when a topic is selected and not hidden ──
     if (showDocuments && documents?.length > 0 && activeTopics.size > 0) {
       for (const topicId of activeTopics) {
         const color = topicColorMap[topicId] ?? '#888';
@@ -77,18 +75,16 @@ export default function PlotCanvas({
           y: topicDocs.map(d => d.y),
           z: topicDocs.map(d => d.z),
           marker: { color, size: 2, opacity: 0.45, line: { width: 0 } },
-          customdata: topicDocs.map(d => ({ entropy: d.entropy ?? 0 })),
-          hovertemplate: `Topic ${topicId}<br>variability: %{customdata.entropy:.3f}<extra></extra>`,
+          hovertemplate: `Topic ${topicId}<extra></extra>`,
           showlegend: false,
         });
       }
     }
 
-    // ── Topic centroids ───────────────────────────────────────────────────
-    // Visible when:
-    //   (a) no words on plot AND no topic clicked — all centroids show
-    //   (b) a topic is highlighted via TopicList — that topic's centroid shows
-    //   (c) a word is focused via plot click — its 2 nearest centroids show
+    // TOPIC CENTROIDS -> visible when:
+    //   no words on plot AND no topic clicked, all centroids show
+    //   a topic is highlighted via TopicList = that topic's centroid shows
+    //   a word is focused via plot click = its 2 nearest centroids show
     if (topicCentroids?.length > 0) {
       const nothingSelected =
         activeTopics.size === 0 &&
@@ -127,7 +123,7 @@ export default function PlotCanvas({
       }
     }
 
-    // ── Word trajectories ─────────────────────────────────────────────────
+    // WORD TRAJECTORIES
     activeWords.forEach(({ word, color, trajectory, nearest_topics }) => {
       if (!trajectory || trajectory.length === 0) return;
 
@@ -137,11 +133,7 @@ export default function PlotCanvas({
         i === total - 1 ? `${word}  (${p.period})` : p.period
       );
 
-      // Nearest topic lines — one trace per line so each can be styled
-      // independently and appear in the legend.
-      //   1st nearest: solid, width 2.5, topic colour
-      //   2nd nearest: dotted, width 1.5, topic colour
-      // Legend shows one ghost entry per rank summarising the convention.
+      // nearest topic lines + legend
       if (nearest_topics) {
         let addedLegendFirst = false;
         let addedLegendSecond = false;
@@ -154,7 +146,7 @@ export default function PlotCanvas({
             const topicColor = topicColorMap[id] ?? '#888';
             const isFirst = rank === 0;
 
-            // One legend ghost entry per rank, per word
+            // one legend entry per rank, per word
             const showThisInLegend = isFirst ? !addedLegendFirst : !addedLegendSecond;
             if (isFirst) addedLegendFirst = true;
             else addedLegendSecond = true;
@@ -181,7 +173,7 @@ export default function PlotCanvas({
         });
       }
 
-      // Main word trajectory
+      // main word trajectory
       result.push({
         type: 'scatter3d',
         mode: 'lines+markers+text',
@@ -208,7 +200,6 @@ export default function PlotCanvas({
           return {
             word,
             period: p.period,
-            entropy: p.entropy ?? 0,
             t1_id: t1?.id ?? '—',
             t1_dist: t1 ? t1.distance.toFixed(3) : '—',
             t2_id: t2?.id ?? '—',
@@ -217,7 +208,6 @@ export default function PlotCanvas({
         }),
         hovertemplate: [
           `<b>%{customdata.word}</b>  (%{customdata.period})`,
-          `variability: %{customdata.entropy:.3f}`,
           `nearest topic: %{customdata.t1_id}  (dist %{customdata.t1_dist})`,
           `2nd topic: %{customdata.t2_id}  (dist %{customdata.t2_dist})`,
           `<extra></extra>`,
@@ -244,7 +234,7 @@ export default function PlotCanvas({
     );
   }
 
-  // Plotly-default style — light blue-grey panes, white grid lines
+  // Plotly
   const axisStyle = {
     showgrid: true,
     gridcolor: 'white',
@@ -255,7 +245,7 @@ export default function PlotCanvas({
     titlefont: { size: 11, color: '#333' },
     backgroundcolor: 'rgb(229,236,246)',
     showbackground: true,
-    showspikes: false,   // disables the confusing spike/box lines on hover
+    showspikes: false,   // disabling the confusing spike/box lines on hover
   };
 
   return (
@@ -299,7 +289,7 @@ export default function PlotCanvas({
         onClick={(e) => {
           if (!e.points?.length) return;
           const pt = e.points[0];
-          // Only fire for word trajectory points (customdata.type === 'word')
+          // only fire for word trajectory points aka customdata.type == word
           if (pt.customdata?.word && onWordSelect) {
             onWordSelect(pt.customdata.word);
           }

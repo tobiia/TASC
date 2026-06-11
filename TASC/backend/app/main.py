@@ -13,7 +13,6 @@ from .core import (
     load_data,
     fit_pca,
     get_word_trajectory,
-    compute_all_entropies,
     get_nearest_topics,
 )
 from .topic import train_top2vec, get_topics, assign_sentence_topics
@@ -42,7 +41,6 @@ logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 word_list = []
 word_means = {}
 word_occurrences = {}
-word_entropies = {}
 sentence_period: dict = {}
 all_sentences: list = []
 sentence_topic: dict = {}
@@ -56,13 +54,12 @@ startup_error = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global word_list, word_means, word_occurrences, word_entropies, sentence_period
+    # FIXME need to ask user for corpora labels/dates
+    global word_list, word_means, word_occurrences, sentence_period
     global all_sentences, sentence_topic, sentence_embeddings, documents_payload
     global topic_centroids_payload, pca, top2vec_model, startup_error
 
-    # Prevent uvicorn log records from reaching the root handler a second time.
-    # uvicorn calls dictConfig (which sets propagate=True) after module import,
-    # so this must run inside lifespan rather than at module level.
+    # prevent uvicorn logs
     logging.getLogger("uvicorn").propagate = False
     logging.getLogger("uvicorn.error").propagate = False
 
@@ -73,15 +70,8 @@ async def lifespan(app: FastAPI):
         )
         logger.info(f"Loaded {len(word_list)} words, {len(all_sentences)} sentences")
 
-        logger.info("Computing word entropies...")
-        word_entropies = compute_all_entropies(word_list, x_embeds, y_embeds)
-        logger.info(f"Computed entropy for {len(word_entropies)} words")
-
         logger.info("Preparing sentence-level documents for Top2Vec...")
-        # Pass individual sentences directly — no grouping needed.
-        # Each sentence is its own document, giving Top2Vec coherent
-        # single-theme input rather than mixed mega-documents.
-        # This significantly improves topic coherence on shuffled corpora.
+
         rng = np.random.default_rng(seed=RANDOM_SEED)
         if len(all_sentences) > MAX_TOPIC_SENTENCES:
             topic_indices = np.sort(
@@ -96,13 +86,11 @@ async def lifespan(app: FastAPI):
             topic_indices = np.arange(len(all_sentences))
             topic_sentences = all_sentences
 
-        # Build sentence embedding lookup from TermSummary.sent_embeds.
-        # sent_embeds rows are parallel to word_occurrences entries so we can
-        # zip them directly. The same sentence always yields the same embedding
-        # since sentence_embeddings[idx] is looked up by unique-sentence index
-        # in embedding_creator.py — deduplication here is safe.
+        # sentence embedding lookup from TermSummary.sent_embeds
+        # sent_embeds rows are parallel to word_occurrences entries so can zip
         logger.info("Building sentence embedding lookup from cached word embeddings...")
         sent_embed_lookup: dict[str, np.ndarray] = {}
+        cache_domain = Path(CORPUS1).parent.name
         corpus1_name = Path(CORPUS1).stem
         corpus2_name = Path(CORPUS2).stem
         for w in word_list:
@@ -125,7 +113,7 @@ async def lifespan(app: FastAPI):
                     if sent not in sent_embed_lookup:
                         sent_embed_lookup[sent] = emb
 
-        # Build ordered embedding matrix matching topic_sentences order.
+        # build ordered embedding matrix matching topic_sentences order
         # Sentences without a cached embedding are omitted — Top2Vec requires
         # precomputed_embeddings to be exactly len(documents) rows, so we
         # filter topic_sentences to only those we have embeddings for.
@@ -141,7 +129,7 @@ async def lifespan(app: FastAPI):
         topic_sentences_covered = [s for s, _ in covered]
         sent_embed_matrix = np.vstack([e for _, e in covered])
 
-        # Remap topic_indices to match the filtered sentence list
+        # remap topic_indices to match the filtered sentence list
         sent_to_global = {s: i for i, s in enumerate(all_sentences)}
         topic_indices = np.array([sent_to_global[s] for s in topic_sentences_covered])
 
@@ -151,7 +139,6 @@ async def lifespan(app: FastAPI):
         )
 
         logger.info("Training Top2Vec model...")
-        cache_domain = f"{Path(CORPUS1).stem}_{Path(CORPUS2).stem}"
         top2vec_model = train_top2vec(
             topic_sentences_covered,
             cache_domain=cache_domain,
@@ -215,9 +202,7 @@ async def lifespan(app: FastAPI):
             i for i in range(len(all_sentences)) if i in sentence_embeddings
         ]
 
-        # Randomly subsample for rendering — uses the same rng (seed=42) so the
-        # rendered subset is stable across restarts. Occurrence bar still uses
-        # all sentences unchanged.
+        # random subsample to ease rendering
         if len(valid_indices) > MAX_RENDER_SENTENCES:
             render_indices = sorted(
                 rng.choice(
@@ -231,12 +216,13 @@ async def lifespan(app: FastAPI):
         else:
             render_indices = valid_indices
 
-        # Project only the sentences we're actually going to render
+        # project only the sentences we're actually going to render
         vecs_3d = pca.transform(
             np.array([sentence_embeddings[i] for i in render_indices])
         )
 
-        # Pre-compute topic centroid norms once for efficiency
+        # pre-compute topic centroid norms
+        # FIXME can probably remove? wwas only used for entropy calc
         n_topics = top2vec_model.get_num_topics()
         topic_centroid_norms = {}
         for tid in range(n_topics):
@@ -251,25 +237,11 @@ async def lifespan(app: FastAPI):
             sentence = all_sentences[sent_idx]
             topic_id = sentence_topic.get(sent_idx, -1)
 
-            # Document entropy: cosine distance from assigned topic centroid
-            # display-only — not used as a spatial axis
-            doc_entropy = 0.0
-            if topic_id >= 0 and topic_id in topic_centroid_norms:
-                sent_norm = sentence_embeddings[sent_idx]  # already L2-normalised
-                doc_entropy = float(
-                    np.clip(
-                        1.0 - float(sent_norm @ topic_centroid_norms[topic_id]),
-                        0.0,
-                        1.0,
-                    )
-                )
-
             documents_payload.append(
                 {
                     "x": float(vecs_3d[j][0]),
                     "y": float(vecs_3d[j][1]),
                     "z": float(vecs_3d[j][2]),
-                    "entropy": doc_entropy,
                     "topic": topic_id,
                     "period": sentence_period.get(sentence, ""),
                     "text": sentence,
@@ -334,7 +306,7 @@ def get_word_data(word):
     try:
         if word not in word_means:
             raise HTTPException(status_code=404, detail=f"Word '{word}' not found")
-        trajectory = get_word_trajectory(word, word_means, pca, word_entropies)
+        trajectory = get_word_trajectory(word, word_means, pca)
         occurrences = word_occurrences.get(word, [])
 
         # nearest 2 topics per time period

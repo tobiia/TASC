@@ -7,13 +7,13 @@ function apiError(label, err) {
   return new Error(`${label}: ${detail}`);
 }
 
-// Returns { status: 'ready' | 'initializing' | 'error', error?, words? }
+// returns { status: "ready", "init", "error" }
 export async function fetchHealth() {
   try {
     const res = await axios.get(`${BASE}/health`);
     return res.data;
   } catch (err) {
-    // Network error or backend not running — treat as not-yet-ready
+    // network error or backend not running = not ready
     return { status: 'unavailable', error: err?.message ?? String(err) };
   }
 }

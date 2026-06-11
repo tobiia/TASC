@@ -4,25 +4,24 @@ import { useMemo } from 'react';
 // all Top2Vec topics, lets user highlight one on plot
 //
 // HALO BEHAVIOUR
-// When a word point is clicked in the plot, App.jsx sets `focusedWord`.
-// TopicList receives `focusedWordNearestTopics` — the nearest_topics entry
-// for that word — and renders a coloured ring (halo) around the 1st and 2nd
-// nearest topic items to visually connect the word to its topic neighbourhood.
+// When a word point is clicked in the plot, App.jsx sets "focusedWord"
+// TopicList receives "focusedWordNearestTopics" = the nearest_topics entry
+// for that word and renders a coloured ring (halo) around the 1st and 2nd
+// nearest topic items to visually connect the word to its topic neighbourhood
 
 const TOPIC_COLORS = ["#21f0b6", "#f55c71", "#6ff03f", "#c068fc", "#59a20c", "#fa2beb", "#d5ff97", "#b97eac", "#20d8fd", "#df8a1d", "#47a2f7", "#f1fb1a", "#8184fb", "#869764", "#ffc4de", "#24a475", "#f76015", "#ffe08c"];
 
 export default function TopicList({
   topics,
   activeTopics,
-  autoTopics,               // Set of topic ids driven by active words — not manually toggleable
+  autoTopics,
   onSelect,
   focusedWordNearestTopics,
   focusedWordColor,
   showDocuments,
   onToggleDocuments,
 }) {
-  // Flatten nearest topic ids across both periods, ranked 1st/2nd
-  // so we can style them differently.
+  // flatten nearest topic ids across both periods, ranked 1st/2nd
   // nearest = { topicId: minRank } where rank 0 = closest
   const nearestRankMap = {};
   if (focusedWordNearestTopics) {
@@ -35,7 +34,7 @@ export default function TopicList({
     });
   }
 
-  // Build stable colour map keyed by topic id so colours don't shift on sort
+  // building colour map keyed by topic id so colours don't shift on sort
   const topicColorById = useMemo(() =>
     Object.fromEntries(topics.map((t, i) => [t.id, TOPIC_COLORS[i % TOPIC_COLORS.length]])),
     [topics]
@@ -86,7 +85,7 @@ export default function TopicList({
           const isNearest = nearestRank === 0;
           const isSecond = nearestRank === 1;
 
-          // Halo: solid ring for 1st nearest, dashed-style (thinner) for 2nd
+          // halo is solid ring for 1st nearest, thinner dashed for 2nd
           const haloStyle = (isNearest || isSecond) && focusedWordColor
             ? {
               outline: `${isNearest ? 2.5 : 1.5}px ${isNearest ? 'solid' : 'dashed'} ${focusedWordColor}`,

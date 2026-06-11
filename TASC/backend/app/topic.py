@@ -1,7 +1,13 @@
 import logging
 import numpy as np
 from top2vec import Top2Vec
-from ...config import CACHE_DIR, TOP2VEC_MODEL, TOP2VEC_WORKERS, TOP2VEC_NUM_TOPICS
+from ...config import (
+    CACHE_DIR,
+    TOP2VEC_MODEL,
+    LAYER,
+    TOP2VEC_WORKERS,
+    TOP2VEC_NUM_TOPICS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +72,7 @@ def train_top2vec(
 
     Args:
         documents: list of sentence strings
-        cache_domain: identifies the corpus pair, e.g. "1860s_1950s"
+        cache_domain: identifies the corpus name, e.g. "semeval_2020"
         precomputed_embeddings: optional (n_docs, hidden_dim) L2-normalised
             ndarray. When provided, Top2Vec skips internal embedding.
 
@@ -111,6 +117,7 @@ def train_top2vec(
         init_kwargs = dict(
             contextual_top2vec=False,  # standard mode — we supply embeddings
             embedding_model=TOP2VEC_MODEL,
+            embedding_layer=LAYER,
             workers=TOP2VEC_WORKERS,
         )
         if precomputed_embeddings is not None:

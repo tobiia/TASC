@@ -1,7 +1,7 @@
 """Start the backend (uvicorn) and frontend (npm dev) together.
 
 Run from the project root:
-    python -m topical_semantic_change.dev
+    python -m TASC.dev
 Or, if installed via pip:
     tasc
 """
@@ -146,7 +146,9 @@ def main():
             sys.executable,
             "-m",
             "uvicorn",
-            "topical_semantic_change.backend.app.main:app",
+            "TASC.backend.app.main:app",
+            "--port",
+            str(PORT_BACKEND),
         ],
         cwd=PROJECT_ROOT,
     )
@@ -161,8 +163,8 @@ def main():
         shell=(sys.platform == "win32"),
     )
 
-    print("Backend:  http://localhost:8000")
-    print("Frontend: http://localhost:5173")
+    print(f"Backend:  http://localhost:{PORT_BACKEND}")
+    print(f"Frontend: http://localhost:{PORT_FRONTEND}")
     print("Press Ctrl+C to stop both.\n")
 
     def _shutdown(sig=None, frame=None):

@@ -5,7 +5,7 @@ from sklearn.decomposition import PCA
 
 from lexical_semantic_change.extraction.word_cache import run_cache as run_word_cache
 from lexical_semantic_change.representation.embed_cache import run_cache
-from ...config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME
+from ...config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME, LAYER
 
 
 def _load_terms(path: Path):
@@ -55,13 +55,12 @@ def load_data():
             raise FileNotFoundError(f"TERMS_FILE not found: {TERMS_FILE}")
         terms = _load_terms(terms_path)
 
+    cache_domain = Path(CORPUS1).parent.name
     corpus1_name = Path(CORPUS1).stem
     corpus2_name = Path(CORPUS2).stem
 
     try:
-        x_words, y_words = run_word_cache(
-            CORPUS1, CORPUS2, f"{corpus1_name}_{corpus2_name}", terms=terms
-        )
+        x_words, y_words = run_word_cache(CORPUS1, CORPUS2, cache_domain, terms=terms)
     except Exception as e:
         raise RuntimeError(f"Failed to extract words from corpora: {e}") from e
 
@@ -72,9 +71,8 @@ def load_data():
         )
 
     try:
-        # REVIEW - should remove layer specification
         (x_embeds, _, x_lemma_sentences), (y_embeds, _, y_lemma_sentences) = run_cache(
-            x_words, y_words, f"{corpus1_name}_{corpus2_name}", MODEL_NAME, layer=11
+            x_words, y_words, cache_domain, MODEL_NAME, layer=LAYER
         )
     except Exception as e:
         raise RuntimeError(f"Failed to compute embeddings: {e}") from e
@@ -116,6 +114,9 @@ def load_data():
         )
 
     return words, word_means, word_occurrences, all_sentences, x_embeds, y_embeds
+
+
+# FIXME can probably remove any references to entropy/variance calc
 
 
 def compute_word_entropy(word, x_embeds, y_embeds):
@@ -198,24 +199,21 @@ def fit_pca(word_means, extra_vecs=None) -> PCA:
         raise RuntimeError(f"PCA fitting failed: {e}") from e
 
 
-def get_word_trajectory(word, word_means, pca, word_entropies=None):
-    """Return [{period, x, y, z, entropy}] for the two corpus time-points.
+def get_word_trajectory(word, word_means, pca):
+    """Return [{period, x, y, z}] for the two corpus time-points.
 
     Axes:
         x — PC 1  }
         y — PC 2  } all three from PCA — fully coherent semantic space
         z — PC 3  }
 
-    entropy is returned as a display field for hover/UI only, not spatial.
-
     Args:
         word: word string
         word_means: dict of word -> (embed_c1, embed_c2)
         pca: fitted 3-component PCA object
-        word_entropies: optional dict of word -> (entropy_c1, entropy_c2)
 
     Returns:
-        List of dicts with keys: period, x, y, z, entropy
+        List of dicts with keys: period, x, y, z
         Returns empty list if word not found in word_means.
     """
     if word not in word_means:
@@ -224,10 +222,6 @@ def get_word_trajectory(word, word_means, pca, word_entropies=None):
     try:
         x_mean, y_mean = word_means[word]
         coords = pca.transform(np.vstack([x_mean, y_mean]))  # (2, 3)
-
-        entropy_c1, entropy_c2 = (0.0, 0.0)
-        if word_entropies is not None:
-            entropy_c1, entropy_c2 = word_entropies.get(word, (0.0, 0.0))
 
         corpus1_name = Path(CORPUS1).stem
         corpus2_name = Path(CORPUS2).stem
@@ -238,14 +232,12 @@ def get_word_trajectory(word, word_means, pca, word_entropies=None):
                 "x": float(coords[0][0]),
                 "y": float(coords[0][1]),
                 "z": float(coords[0][2]),
-                "entropy": float(entropy_c1),
             },
             {
                 "period": corpus2_name,
                 "x": float(coords[1][0]),
                 "y": float(coords[1][1]),
                 "z": float(coords[1][2]),
-                "entropy": float(entropy_c2),
             },
         ]
     except Exception as e:

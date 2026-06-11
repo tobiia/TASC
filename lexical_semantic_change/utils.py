@@ -7,6 +7,8 @@ logger = logging.getLogger(__name__)
 
 # utility functions
 
+# FIXME - replace with scipy: https://github.com/FrancescoPeriti/CSSDetection/
+
 
 def save_set_to_csv(data_set, file_path):
     with open(file_path, "w", newline="", encoding="utf-8") as f:

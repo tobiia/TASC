@@ -240,5 +240,3 @@ class WordExtractor:
 
         logger.info(f"Found {len(result)}/{len(term_set)} requested terms")
         return dict(result)
-
-    # TODO extract sentences + definitions for sense disambiguation

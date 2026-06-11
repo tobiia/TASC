@@ -27,7 +27,7 @@ logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
 # -----------------------------------------------------------
 # ANCHOR - config
 
-LAYERS = [None]
+LAYERS = [8]
 
 # ----------------------------------------------------------------
 # ANCHOR - main()
@@ -47,11 +47,11 @@ def main():
     parser.add_argument("-l", "--label", help="optional label for output file")
     args = parser.parse_args()
 
-    # Setup logging
+    # setup logging
     logging.basicConfig(level=logging.INFO, format="%(levelname)s - %(message)s")
     logger.info(f"Starting LSC evaluation with label: {args.label or 'default'}")
 
-    # Validate paths
+    # validate paths
     if not Path(args.corpus1).exists():
         raise FileNotFoundError(f"corpus1 not found: {args.corpus1}")
     if not Path(args.corpus2).exists():
@@ -59,9 +59,7 @@ def main():
     if not Path(args.words).exists():
         raise FileNotFoundError(f"input words not found: {args.words}")
 
-    output_path = (
-        PROJECT_ROOT / f"eval_results{'_' + args.label if args.label else ''}.csv"
-    )
+    output_path = PROJECT_ROOT / f"eval_{args.label if args.label else ''}.csv"
 
     logger.info("Setting up...")
     corpora_direct = Path(args.corpus1)

@@ -106,7 +106,7 @@ export default function PlotCanvas({
           marker: {
             color: visibleCentroids.map(c => lightenColor(topicColorMap[c.id] ?? '#888', 0.55)),
             size: 5,
-            opacity: 0.60,
+            opacity: 0.70,
             symbol: 'circle',
             line: {
               width: 1.5,
@@ -143,7 +143,7 @@ export default function PlotCanvas({
           periodNearest.forEach(({ id }, rank) => {
             const centroid = centroidPosMap[id];
             if (!centroid) return;
-            const topicColor = topicColorMap[id] ?? '#888';
+            const topicColor = topicColorMap[id] ?? '#e017c5';
             const isFirst = rank === 0;
 
             // one legend entry per rank, per word
@@ -165,7 +165,7 @@ export default function PlotCanvas({
                 width: isFirst ? 2.5 : 3.5,
                 dash: isFirst ? 'solid' : 'dash',
               },
-              opacity: isFirst ? 0.4 : 0.5,
+              opacity: isFirst ? 0.5 : 0.6,
               showlegend: showThisInLegend,
               hoverinfo: 'skip',
             });

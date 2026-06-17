@@ -9,7 +9,7 @@ import { useMemo } from 'react';
 // for that word and renders a coloured ring (halo) around the 1st and 2nd
 // nearest topic items to visually connect the word to its topic neighbourhood
 
-const TOPIC_COLORS = ["#21f0b6", "#f55c71", "#6ff03f", "#c068fc", "#59a20c", "#fa2beb", "#d5ff97", "#b97eac", "#20d8fd", "#df8a1d", "#47a2f7", "#f1fb1a", "#8184fb", "#869764", "#ffc4de", "#24a475", "#f76015", "#ffe08c"];
+const TOPIC_COLORS = ["#6bb8ef", "#c61723", "#2e349b", "#9d08d3", "#1be826", "#e29c18", "#b2632e", "#eac327", "#4a9cd3", "#19a5c4", "#11938f", "#233cdd", "#e01186", "#c9dd33", "#f4b369", "#739f5e", "#c91a60", "#70cdff", "#f47aec", "#d67733", "#041f5e", "#26e28a", "#cc395190", "#ce0ecb", "#46127c", "#af3f23", "#a494fd", "#f890c8", "#683312", "#395e1066",];
 
 export default function TopicList({
   topics,

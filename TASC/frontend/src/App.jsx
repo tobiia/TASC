@@ -8,7 +8,7 @@ import TopicList from './components/TopicList';
 import PlotCanvas from './components/PlotCanvas';
 import OccurrenceBar from './components/OccurrenceBar';
 
-const WORD_COLORS = ["#6450a8", "#638123", "#573bed", "#914c0f", "#1d7bc3", "#ce1365", "#2a8476", "#db3c23", "#134424", "#d518bd", "#382010", "#060369", "#807477", "#620932", "#b45a78", "#0e2450"];
+const WORD_COLORS = ["#6450a8", "#638123", "#573bed", "#914c0f", "#1d7bc3", "#ce1365", "#2a8476", "#db3c23", "#134424", "#d518bd", "#9d5b2e", "#060369", "#807477", "#620932", "#b45a78", "#7e1616"];
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -191,7 +191,7 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <h1>Lexical Semantic Change</h1>
-        <span>word embeddings over time · Top2Vec topic clusters · 3D PCA visualization</span>
+        <span>3D PCA visualization of word embeddings over time</span>
       </header>
 
       {(phase === 'polling' || phase === 'loading') && (

@@ -3,6 +3,10 @@ import numpy as np
 import pandas as pd
 import logging
 
+from scipy.spatial.distance import cdist, cosine
+from sklearn.metrics import pairwise_distances
+from scipy.stats import spearmanr
+
 logger = logging.getLogger(__name__)
 
 # utility functions
@@ -30,6 +34,39 @@ def l2_normalize(x):
     return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-9)
 
 
+def dist(a, b, metric):
+    d = cdist(a, b, metric)
+    if np.isnan(d).any():
+        return pairwise_distances(a, b, metric)
+    return d
+
+
+def apd(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    D = dist(x, y, metric="cosine")  # shape: (|φ1|, |φ2|)
+
+    return float(D.mean())  # == sum / (|φ1||φ2|)
+
+
+def prt(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    mu1 = x.mean(axis=0) if x.ndim > 1 else x
+    mu2 = y.mean(axis=0) if y.ndim > 1 else y
+
+    cos_dist = cosine(mu1, mu2)
+
+    return 1.0 / max(cos_dist, 1e-9)
+
+
+def spearmans(x: pd.Series, y: pd.Series):
+    return spearmanr(x, y).statistic
+
+
+""" 
 def cosine_sim(x, y, eps: float = 1e-9):
     x_arr = np.asarray(x, dtype=float)
     y_arr = np.asarray(y, dtype=float)
@@ -48,9 +85,8 @@ def cosine_sim(x, y, eps: float = 1e-9):
 
     if x_arr.ndim == 1:
         return float(sim)
-    return sim
-
-
+    return sim 
+    
 def prt(x, y):
     sim = cosine_sim(x, y)
     if sim == 0.0:
@@ -58,7 +94,7 @@ def prt(x, y):
     return 1.0 / max(sim, 1e-9)
 
 
-def adp(x, y):
+def apd(x, y):
     x_arr = np.asarray(x, dtype=float)
     y_arr = np.asarray(y, dtype=float)
 
@@ -71,4 +107,4 @@ def adp(x, y):
 
 
 def spearmans(x: pd.Series, y: pd.Series) -> float:
-    return x.corr(y, method="spearman")
+    return x.corr(y, method="spearman") """

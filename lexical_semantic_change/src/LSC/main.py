@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 import pandas as pd
 
-from .utils import adp
+from .utils import apd
 from .representation.embed_cache import run_cache
 from .extraction.word_cache import run_cache as run_word_cache
 from .config import PROJECT_ROOT
@@ -61,7 +61,7 @@ def main():
     if not Path(args.words).exists():
         raise FileNotFoundError(f"words file not found: {args.words}")
 
-    output_path = PROJECT_ROOT / f"results{'_' + args.label if args.label else ''}.csv"
+    output_path = PROJECT_ROOT / f"results{"_" + args.label if args.label else ""}.csv"
 
     logger.info("Setting up...")
     corpus_path = Path(args.corpus1)
@@ -108,7 +108,7 @@ def main():
             logger.debug(f"Word '{word}' missing from one corpus")
             continue
         try:
-            word_scores[word] = adp(
+            word_scores[word] = apd(
                 x_embeds[word].word_embeds, y_embeds[word].word_embeds
             )
         except Exception as e:

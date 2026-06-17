@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..utils import l2_normalize, load_gold_set, adp, prt, spearmans
+from ..utils import l2_normalize, load_gold_set, apd, prt, spearmans
 from ..representation.embed_cache import run_cache
 from ..extraction.word_cache import run_cache as run_word_cache
 from ..config import PROJECT_ROOT
@@ -104,7 +104,7 @@ def main():
             )
             continue
 
-        for fn_name in ("adp", "prt"):
+        for fn_name in ("apd", "prt"):
             word_scores = {}
             for word in words:
                 if word not in x_embeds or word not in y_embeds:
@@ -113,8 +113,8 @@ def main():
                 try:
                     x_ts = x_embeds[word]
                     y_ts = y_embeds[word]
-                    if fn_name == "adp":
-                        word_scores[word] = adp(x_ts.word_embeds, y_ts.word_embeds)
+                    if fn_name == "apd":
+                        word_scores[word] = apd(x_ts.word_embeds, y_ts.word_embeds)
                     elif fn_name == "prt":
                         x_vec = l2_normalize(
                             np.mean(l2_normalize(x_ts.word_embeds), axis=0)

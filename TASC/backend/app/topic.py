@@ -1,13 +1,13 @@
 import logging
 import numpy as np
-from top2vec import Top2Vec
-from ...config import (
+from ....config import (
     CACHE_DIR,
     TOP2VEC_MODEL,
     LAYER,
     TOP2VEC_WORKERS,
     TOP2VEC_NUM_TOPICS,
 )
+from top2vec import Top2Vec
 
 logger = logging.getLogger(__name__)
 

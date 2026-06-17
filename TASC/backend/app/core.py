@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 
-from lexical_semantic_change.extraction.word_cache import run_cache as run_word_cache
-from lexical_semantic_change.representation.embed_cache import run_cache
-from ...config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME, LAYER
+from lexical_semantic_change.src.LSC.extraction.word_cache import run_cache as run_word_cache
+from lexical_semantic_change.src.LSC.representation.embed_cache import run_cache
+from ....config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME, LAYER
 
 
 def _load_terms(path: Path):
@@ -55,6 +55,7 @@ def load_data():
             raise FileNotFoundError(f"TERMS_FILE not found: {TERMS_FILE}")
         terms = _load_terms(terms_path)
 
+    # FIXME what if the user only has cache files? need to refactor this
     corpora_label = Path(CORPUS1).parent.name
     corpus1_name = Path(CORPUS1).stem
     corpus2_name = Path(CORPUS2).stem

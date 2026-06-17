@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
 import logging
-import os
+import sys
 from typing import Optional
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sklearn.decomposition import PCA
 from top2vec import Top2Vec
 
@@ -17,7 +18,8 @@ from .core import (
 )
 from .topic import train_top2vec, get_topics, assign_sentence_topics
 from pathlib import Path
-from ...config import (
+from ....config import (
+    DIST,
     CORPUS1,
     CORPUS2,
     MAX_TOPIC_SENTENCES,
@@ -260,16 +262,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-_cors_env = os.getenv("CORS_ORIGINS", "http://localhost:5173")
-origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+# NOTE dependent on VITE, change if build tool changes
+IS_DEV = "--reload" in sys.argv
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if IS_DEV:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.mount(
+        "/",
+        StaticFiles(directory=DIST, html=True),
+        name="frontend",
+    )
 
 
 def _ensure_ready():

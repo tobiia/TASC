@@ -7,7 +7,7 @@ PORT_BACKEND = 9000
 
 PORT_FRONTEND = 5173
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 SRC_DIR = PROJECT_ROOT / "TASC"
 
@@ -18,6 +18,8 @@ CORPORA_DIR = PROJECT_ROOT / "corpora"
 BACKEND = SRC_DIR / "backend"
 
 FRONTEND = SRC_DIR / "frontend"
+
+DIST = SRC_DIR / "frontend_dist"
 
 # ANCHOR - where to set paths for app data
 CORPUS1 = str(CORPORA_DIR / "semeval2020_ulscd_eng" / "corpus1")

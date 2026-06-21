@@ -1,0 +1,15 @@
+model,layer,fn,rho
+sentence-transformers/all-mpnet-base-v2,3,apd,0.42918964458422426
+sentence-transformers/all-mpnet-base-v2,3,prt,0.39030174308598525
+sentence-transformers/all-mpnet-base-v2,4,apd,0.4187563051578675
+sentence-transformers/all-mpnet-base-v2,4,prt,0.3856778767493043
+sentence-transformers/all-mpnet-base-v2,5,apd,0.40358053871953037
+sentence-transformers/all-mpnet-base-v2,5,prt,0.4023949319665352
+sentence-transformers/all-mpnet-base-v2,9,apd,0.3961112161756612
+sentence-transformers/all-mpnet-base-v2,9,prt,0.4833718731961002
+sentence-transformers/all-mpnet-base-v2,10,apd,0.4386744986081851
+sentence-transformers/all-mpnet-base-v2,10,prt,0.5417037254434588
+sentence-transformers/all-mpnet-base-v2,11,apd,0.47969649226181543
+sentence-transformers/all-mpnet-base-v2,11,prt,0.5436006962482509
+sentence-transformers/all-mpnet-base-v2,,apd,0.38698204417759896
+sentence-transformers/all-mpnet-base-v2,,prt,0.5038828700229152

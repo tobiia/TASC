@@ -1,0 +1,30 @@
+[constants]
+random_seed = 42
+
+[server]
+port_backend = 9000
+port_frontend = 5173
+
+[data] # text data locations
+corpus1 = "corpora/semeval2020_ulscd_eng/corpus1"
+corpus2 = "corpora/semeval2020_ulscd_eng/corpus2"
+# TERMS_FILE can be "" or path to a CSV or TXT file of terms to search for
+# terms_file = "" --> no file, extract all words 
+# (takes an extremely long time for long corpora)
+terms_file = "corpora/semeval2020_ulscd_eng/truth.csv"
+
+[model] # embedding model
+name = "sentence-transformers/all-mpnet-base-v2"
+layer = 11
+
+[top2vec]
+top2vec_model = "all-mpnet-base-v2"
+# max number of sentences fed to Top2Vec for topic modelling
+max_topic_sentences = 100_000
+# can specify the number of topics Top2Vec creates
+top2vec_num_topics = ""
+# empty = uses the max for your computer
+top2vec_workers = ""
+# max number of sentence points rendered in the 3D plot
+# sentences beyond this limit are still available in the occurrence bar
+max_render_sentences = 10_000

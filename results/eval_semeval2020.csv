@@ -1,0 +1,9 @@
+model,layer,fn,rho
+pierluigic/xl-lexeme,,adp,0.6991523022412075
+pierluigic/xl-lexeme,,prt,0.5711067729177371
+sentence-transformers/all-MiniLM-L6-v2,,adp,0.2962831275734742
+sentence-transformers/all-MiniLM-L6-v2,,prt,0.24755469002537583
+sentence-transformers/all-mpnet-base-v2,,adp,0.38698204417759896
+sentence-transformers/all-mpnet-base-v2,,prt,0.5038828700229152
+FacebookAI/xlm-roberta-base,,adp,0.5713438942683363
+FacebookAI/xlm-roberta-base,,prt,0.45764420665610667

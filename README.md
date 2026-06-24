@@ -1,4 +1,4 @@
-# TASC: Topical-Aware Semantic Change
+# TASC: Topic-Aware Semantic Change
 
 An interactive 3D visualization for analyzing and characterizing lexical semantic change across corpora using topic modeling.
 
@@ -32,9 +32,13 @@ The visualization tool analyzes a pair of corpora and displays word trajectories
 
 - Download the latest release
 - Unzip the folder
+- Download the sample cache files [HERE](https://zenodo.org/records/20636728)
+- Place all downloaded cache files into the `cache` directory
 - If on Windows:
-  - Double-click **Install.bat** and allow it to finish installation
-  - Double-click **Run.bat**
+  - Open `scripts` directory
+  - Double-click **install.bat** and allow it to finish installation
+  - go back to `TASC` directory
+  - Double-click **run.bat**
 - If on Linux:
 ```bash
   chmod +x install.sh run.sh
@@ -42,10 +46,12 @@ The visualization tool analyzes a pair of corpora and displays word trajectories
 ./run.sh
 ```
 - If on MacOS:
+  - Open `scripts` directory
   - Double-click **tasc_install.app** and allow it to finish installation
+  - go back to `TASC` directory
   - Double-click **tasc_run.app**
 
-You only need to install once. After, you can simply double-click on your Run executable.
+You only need to install once. After, you can simply double-click on your Run executable to start the app!
 
 **Visit `http://localhost:9000` to explore**:
 - **Left panel**: Select words to visualize
@@ -104,7 +110,7 @@ word2	0.12
 ...
 ```
 
-### Using Your Own Data in TASC
+### Using Your Own Data
 
 1. Prepare the following files: 
   - Text files(s) composing the first corpus
@@ -164,7 +170,7 @@ Delete ALL cache files with the same label as your dataset (ex. `datasets2`) to 
 - **Memory**: Typical usage 4-8GB for mid-size corpora; increase `batch_size` parameter if memory-constrained
 - **GPU**: Significantly faster; ensure CUDA is available via `torch.cuda.is_available()`
 
-## Project Structure
+## Project Structure (OUTDATED)
 
 ```
 .

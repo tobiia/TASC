@@ -56,7 +56,7 @@ export default function App() {
   const [focusedWord, setFocusedWord] = useState(null);
 
   // whether to show document embeddings or only topic centroids
-  const [showDocuments, setShowDocuments] = useState(true);
+  const [showDocuments, setShowDocuments] = useState(false);
 
   // topics derived from active words —> cannot be manually deselected
   const autoTopics = useMemo(() => {

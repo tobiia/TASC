@@ -52,7 +52,7 @@ export default function TopicList({
     <div className="panel panel-right">
       <div className="panel-header">
         <div className="panel-title">Topics</div>
-        <p>Click to toggle · word-linked topics are locked</p>
+        <p>Click to toggle</p>
         <button
           onClick={onToggleDocuments}
           style={{

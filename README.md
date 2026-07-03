@@ -31,18 +31,14 @@ The visualization tool analyzes a pair of corpora and displays word trajectories
 #### Quick Installation with Sample Data
 
 - Download the latest release
-- Unzip the folder
-- Download the sample cache files [HERE](https://zenodo.org/records/20636728)
-- Place all downloaded cache files into the `cache` directory
-- If on Windows:
-  - Open `scripts` directory
+- Extract the folder wherever you want
+- If on **Windows**:
   - Double-click **install.bat** and allow it to finish installation
-  - go back to `TASC` directory
   - Double-click **run.bat**
 - If on Linux:
 ```bash
-  chmod +x install.sh run.sh
-./install.sh
+  chmod +x /scripts/install.sh run.sh
+./scripts/install.sh
 ./run.sh
 ```
 - If on MacOS:
@@ -50,6 +46,7 @@ The visualization tool analyzes a pair of corpora and displays word trajectories
   - Double-click **tasc_install.app** and allow it to finish installation
   - go back to `TASC` directory
   - Double-click **tasc_run.app**
+- A terminal window will open once TASC starts loading. Make sure to close this once you're done to stop the server!
 
 You only need to install once. After, you can simply double-click on your Run executable to start the app!
 
@@ -276,13 +273,16 @@ If you copy the repo using git, you will need to download the sample dataset  as
 To use the sample dataset:
 
 1. Download the sample cache files [HERE](https://zenodo.org/records/20636728)
-2. Create a directory named `cache` in the project root
-3. Place all downloaded cache files into the `cache` directory
+2. Place all downloaded cache files into the `cache` directory
 
 #### Use the release version
 
+- Download the latest release
+- Extract the folder wherever you want
+- Download the sample cache files [HERE](https://zenodo.org/records/20636728)
+- Place all downloaded cache files into the `cache` directory
+
 ```bash
-# download release
 # open scripts/
 # click dev_install.bat --> creates venv + installs all dependencies
 

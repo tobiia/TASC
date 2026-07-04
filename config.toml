@@ -23,7 +23,7 @@ top2vec_model = "all-mpnet-base-v2"
 max_topic_sentences = 100_000
 # can specify the number of topics Top2Vec creates
 top2vec_num_topics = ""
-# empty = uses the max for your computer
+# "" = uses the max for your computer
 top2vec_workers = ""
 # max number of sentence points rendered in the 3D plot
 # sentences beyond this limit are still available in the occurrence bar

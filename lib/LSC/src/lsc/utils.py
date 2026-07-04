@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import logging
 
+# FIXME - remove scipy, too big
 from scipy.spatial.distance import cdist, cosine
 from sklearn.metrics import pairwise_distances
 from scipy.stats import spearmanr

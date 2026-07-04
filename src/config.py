@@ -13,7 +13,7 @@ CORPORA_DIR = PROJECT_ROOT / "corpora"
 
 BACKEND = PROJECT_ROOT / "src" / "backend"
 FRONTEND = PROJECT_ROOT / "src" / "frontend"
-DIST = PROJECT_ROOT / "src" / "frontend_dist"
+DIST = PROJECT_ROOT / "src" / "dist"
 
 
 CONFIG_FILE = PROJECT_ROOT / "config.toml"

@@ -23,16 +23,6 @@ def _load_terms(path: Path):
         ]
 
 
-def _validate_corpus_paths():
-    """Validate that corpus directories exist."""
-    for path, name in [(CORPUS1, "CORPUS1"), (CORPUS2, "CORPUS2")]:
-        if not path.exists():
-            raise FileNotFoundError(
-                f"{name} path does not exist: {path}\n"
-                f"Expected corpus files at: {CORPUS1}/*.txt and {CORPUS2}/*.txt"
-            )
-
-
 def load_data():
     """Extract shared words, compute embeddings, return data needed by the API.
 
@@ -44,7 +34,6 @@ def load_data():
         x_embeds: raw embed objects for corpus 1, keyed by word
         y_embeds: raw embed objects for corpus 2, keyed by word
     """
-    _validate_corpus_paths()
 
     # REVIEW - should eventually be optional
     terms: list[str] | None = None

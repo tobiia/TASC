@@ -35,12 +35,20 @@ setuptools.setup(
         "wordcloud",
         "transformers",
         "tqdm",
+        "sentence_transformers",
+        "torch",
     ],
     extras_require={
         "sentence_encoders": [
             "tensorflow",
             "tensorflow_hub",
             "tensorflow_text",
+        ],
+        "test": [
+            "tensorflow",
+            "tensorflow_hub",
+            "tensorflow_text",
+            "pytest",
         ],
         "sentence_transformers": [
             "torch",

@@ -5,9 +5,6 @@ gensim>=4.0.0
 umap-learn>=0.5.1
 hdbscan>=0.8.27
 wordcloud
-tensorflow
-tensorflow_hub
-tensorflow_text
 torch
 sentence_transformers
 hnswlib

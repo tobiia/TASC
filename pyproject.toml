@@ -10,7 +10,7 @@ authors = [{ name = "Tobi Adesanya", email = "tobijadesanya@gmail.com" }]
 description = "A comprehensive framework for analyzing lexical semantic change across corpora with integrated topic modeling and interactive 3D visualization."
 readme = "README.md"
 license = { text = "MIT" }
-dependencies = ["fastapi[standard]"]
+dependencies = ["fastapi", "uvicorn", "colorama"]
 
 [project.scripts]
 tasc = "src.cli:main"

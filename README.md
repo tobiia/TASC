@@ -259,8 +259,8 @@ py -3.12 -m venv .venv
 
 # install dependencies and package
 python -m pip install --upgrade pip
-pip install lib/LSC
-pip install lib/Top2Vec
+pip install package/LSC
+pip install package/Top2Vec
 pip install -e .
 python -m spacy download en_core_web_sm
 

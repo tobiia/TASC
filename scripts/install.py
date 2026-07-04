@@ -110,8 +110,8 @@ def main():
             "install",
             "-r",
             "requirements.txt",
-            "lib/LSC",
-            "lib/Top2Vec",
+            "package/LSC",
+            "package/Top2Vec",
         ]
     )
 

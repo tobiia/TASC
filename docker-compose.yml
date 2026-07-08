@@ -1,0 +1,26 @@
+services:
+
+  backend:
+    build:
+      context: .
+      dockerfile: src/backend/Dockerfile
+
+    environment:
+      PORT_BACKEND: ${PORT_BACKEND}
+
+    ports:
+      - "9000:9000"
+
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+
+    environment:
+      PORT_BACKEND: ${PORT_BACKEND}
+
+    ports:
+      - "80:80"
+
+    depends_on:
+      - backend

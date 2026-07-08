@@ -26,6 +26,7 @@ def wait_for_port(port, timeout=300, interval=0.25):
     return False
 
 
+# FIXME add --reload flag for dev
 def start_backend(dev=False):
     print(Fore.CYAN + "\nStarting backend...")
     env = os.environ.copy()
@@ -84,6 +85,8 @@ def main():
         backend.kill()
 
         sys.exit(0)
+
+    # FIXME should run build here
 
     dev = args.command == "dev"
     backend = start_backend(dev)

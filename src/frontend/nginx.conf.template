@@ -1,0 +1,19 @@
+# template file is used b/c nginx doesn't support env variables
+# but the nginx image has a envsubst func that replaces all var in template
+# then generates the actual nginx.conf from it
+# see Dockerfile b/c you have to invoke it in specific way
+
+server {
+    listen 80;
+
+    root /usr/share/nginx/html;
+    index index.html index.htm;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://backend:${PORT_BACKEND};
+    }
+}

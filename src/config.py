@@ -13,7 +13,7 @@ CORPORA_DIR = PROJECT_ROOT / "corpora"
 
 BACKEND = PROJECT_ROOT / "src" / "backend"
 FRONTEND = PROJECT_ROOT / "src" / "frontend"
-DIST = PROJECT_ROOT / "src" / "dist"
+DIST = FRONTEND / "dist"
 
 
 CONFIG_FILE = PROJECT_ROOT / "config.toml"
@@ -25,8 +25,9 @@ RANDOM_SEED = _cfg["constants"]["random_seed"]
 
 # server
 
-PORT_BACKEND = _cfg["server"]["port_backend"]
-PORT_FRONTEND = _cfg["server"]["port_frontend"]
+PORT_BACKEND = int(os.getenv("PORT_BACKEND", 9000))
+PORT_FRONTEND = int(os.getenv("PORT_FRONTEND", 5173))
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 # data
 

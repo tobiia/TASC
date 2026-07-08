@@ -14,7 +14,7 @@ npm install
 npm run dev
 ```
 
-Starts dev server at `http://localhost:5173`. Requires backend running at `http://localhost:8000`.
+Starts dev server at `http://localhost:5173`. Requires backend running at `http://localhost:9000`.
 
 ## Architecture
 

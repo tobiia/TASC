@@ -1,10 +1,6 @@
 [constants]
 random_seed = 42
 
-[server]
-port_backend = 9000
-port_frontend = 5173
-
 [data] # text data locations
 corpus1 = "corpora/semeval2020_ulscd_eng/corpus1"
 corpus2 = "corpora/semeval2020_ulscd_eng/corpus2"

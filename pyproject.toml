@@ -7,7 +7,7 @@ name = "tasc"
 version = "1.0.0"
 requires-python = ">=3.12"
 authors = [{ name = "Tobi Adesanya", email = "tobijadesanya@gmail.com" }]
-description = "A comprehensive framework for analyzing lexical semantic change across corpora with integrated topic modeling and interactive 3D visualization."
+description = "A interactive 3D visualization for analyzing lexical semantic change across corpora with integrated topic modeling."
 readme = "README.md"
 license = { text = "MIT" }
 dependencies = ["fastapi", "uvicorn", "colorama"]

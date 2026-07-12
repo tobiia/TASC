@@ -2,7 +2,7 @@
 // root component — owns all state, fetches data, passes props down
 
 import { useState, useEffect, useRef, useMemo, Component } from 'react';
-import { fetchWords, fetchWord, fetchTopics, fetchDocuments, fetchHealth, fetchTopicCentroids } from './api';
+import { useApi } from './api/apiContext';
 import WordList from './components/WordList';
 import TopicList from './components/TopicList';
 import PlotCanvas from './components/PlotCanvas';
@@ -34,6 +34,8 @@ class ErrorBoundary extends Component {
 }
 
 export default function App() {
+  const { fetchWords, fetchWord, fetchTopics, fetchDocuments, fetchHealth, fetchTopicCentroids } = useApi();
+
   // words from backend
   const [allWords, setAllWords] = useState([]);
 
@@ -133,7 +135,7 @@ export default function App() {
       cancelled = true;
       clearTimeout(pollTimer.current);
     };
-  }, []);
+  }, [fetchWords, fetchTopics, fetchDocuments, fetchTopicCentroids, fetchHealth]);
 
   // user clicks on word in WORD LIST
   async function handleWordToggle(word) {

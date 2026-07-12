@@ -20,6 +20,8 @@ COPY packages ./packages
 # create venv
 RUN python -m venv .venv
 
+RUN ./.venv/Scripts/activate
+
 # using venv python/pip from now on
 ENV PATH="/app/.venv/bin:$PATH"
 
@@ -33,10 +35,10 @@ RUN python -m pip install ./packages/LSC ./packages/Top2Vec
 # install spaCy model
 RUN python -m spacy download en_core_web_sm
 
-# app code + packages
+# app code
 COPY src ./src
-COPY corpora ./corpora
 
 ENV PYTHONPATH=/app
 
-CMD [ "python", "-m", "uvicorn", "src.backend.app.main:app", "--host", "0.0.0.0", "--port", ${PORT_BACKEND} ]
+# must use shell so env var is replaced
+CMD ["sh", "-c", "python -m uvicorn src.backend.app.main:app --host 0.0.0.0 --port ${PORT_BACKEND}"]

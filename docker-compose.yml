@@ -9,7 +9,7 @@ services:
       PORT_BACKEND: ${PORT_BACKEND}
 
     ports:
-      - "9000:9000"
+      - "${PORT_BACKEND}:${PORT_BACKEND}"
 
   frontend:
     build:

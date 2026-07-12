@@ -1,0 +1,23 @@
+# Python
+__pycache__
+pycache
+*.egg-info
+*.pyc
+.mypy_cache
+.coverage
+htmlcov
+
+cache
+corpora
+results
+scripts
+frontend
+dist
+.venv
+.git
+.github
+.gitignore
+
+.cache
+.corpora
+.dist

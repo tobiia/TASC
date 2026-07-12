@@ -14,7 +14,7 @@ from src.backend.app.topic import (
     get_topics,
     assign_sentence_topics,
 )
-from src.config import (
+from src.backend.config import (
     CORPUS1,
     CORPUS2,
     MAX_TOPIC_SENTENCES,

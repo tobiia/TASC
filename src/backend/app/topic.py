@@ -1,6 +1,6 @@
 import logging
 import numpy as np
-from src.config import (
+from src.backend.config import (
     CACHE_DIR,
     TOP2VEC_MODEL,
     LAYER,

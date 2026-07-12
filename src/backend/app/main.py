@@ -12,7 +12,7 @@ from src.backend.app.core import (
 )
 from src.backend.app.topic import get_topics
 from src.backend.app.data.load import load_app_data
-from src.config import DIST
+from src.backend.config import DIST
 
 logging.basicConfig(
     level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s\n"

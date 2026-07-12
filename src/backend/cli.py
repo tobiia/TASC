@@ -9,8 +9,8 @@ from colorama import init, Fore
 
 init(autoreset=True)
 
-from src.config import PORT_BACKEND, PORT_FRONTEND, PROJECT_ROOT, FRONTEND
-from src.process import popen
+from src.backend.config import PORT_BACKEND, PORT_FRONTEND, PROJECT_ROOT, FRONTEND
+from src.backend.process import popen
 
 
 def wait_for_port(port, timeout=300, interval=0.25):

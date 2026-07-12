@@ -4,7 +4,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 
 from lsc import run_word_cache, run_embed_cache
-from src.config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME, LAYER
+from src.backend.config import TERMS_FILE, CORPUS1, CORPUS2, MODEL_NAME, LAYER
 
 
 def _load_terms(path: Path):

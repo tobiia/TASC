@@ -7,7 +7,7 @@ import numpy as np
 from src.backend.app.core import get_word_trajectory, get_nearest_topics
 from src.backend.app.data.load import load_app_data
 from src.backend.app.topic import get_topics
-from src.config import PROJECT_ROOT, RANDOM_SEED
+from src.backend.config import PROJECT_ROOT, RANDOM_SEED
 
 logger = logging.getLogger(__name__)
 

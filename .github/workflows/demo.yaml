@@ -42,14 +42,14 @@ jobs:
       - name: install dependencies
         uses: bahmutov/npm-install@v1
         with:
-          working-directory: src/frontend
+          working-directory: ./src/frontend
 
       - name: setup pages
         uses: actions/configure-pages@v5
 
       - name: static app
         run: npm run build:demo
-        working-directory: src/frontend
+        working-directory: ./src/frontend
 
       - name: upload artifact
         uses: actions/upload-pages-artifact@v3

@@ -1,3 +1,14 @@
+# FIXME - add to docs
+# how to test demo
+
+# re-generate sample data
+# python -m src.backend.app.data.export
+
+# run demo
+# cd src/frontend
+# npm run build:demo
+# npm run preview
+
 import json
 import logging
 from pathlib import Path

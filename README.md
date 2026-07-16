@@ -241,7 +241,7 @@ MIT License (see LICENCE.md)
 ### Requirements
 - Python 3.10 <= version <=3.12.10
 - [Git](https://git-scm.com/install/windows)
-- [Node.js](https://nodejs.org/en/download/current)
+- [Node.js](https://nodejs.org/en/download/current) >= 22.23.1
 
 ### Contributor Installation
 
@@ -259,9 +259,9 @@ py -3.12 -m venv .venv
 
 # install dependencies and package
 python -m pip install --upgrade pip
+pip install -r requirements.txt
 pip install package/LSC
 pip install package/Top2Vec
-pip install -e .
 python -m spacy download en_core_web_sm
 
 # start dev server
@@ -279,13 +279,9 @@ To use the sample dataset:
 
 - Download the latest release
 - Extract the folder wherever you want
-- Download the sample cache files [HERE](https://zenodo.org/records/20636728)
-- Place all downloaded cache files into the `cache` directory
+- Click `install.bat`
 
 ```bash
-# open scripts/
-# click dev_install.bat --> creates venv + installs all dependencies
-
 # start dev server
 tasc dev
 ```

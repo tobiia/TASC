@@ -12,7 +12,7 @@
 // and apply a halo ring to the two nearest topics / the word itself.
 
 import { useMemo } from 'react';
-import Plot from '../plotly';
+import Plot from '../Plotly';
 import { TOPIC_COLORS } from './TopicList';
 
 /** lighten/move colour toward white by "amount" (0–1). */
